@@ -1,0 +1,332 @@
+name: ci
+
+on:
+  # Branch pushes intentionally disabled — CI runs on PRs and version tags only.
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish GitHub Release (true to publish release assets)"
+        type: boolean
+        default: false
+
+jobs:
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run typecheck
+      - run: pnpm turbo run test
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: go vet ./...
+        working-directory: go-core
+      - run: go test ./...
+        working-directory: go-core
+      # Windows-only host. Vet and test above run on Linux and skip it.
+      - run: go build -o bin/nomadvnc-host.exe ./cmd/nomadvnc-host
+        working-directory: go-core
+        env:
+          GOOS: windows
+          GOARCH: amd64
+
+  package-linux:
+    # Builds installable Linux desktop packages (AppImage, RPM, DEB).
+    # Runs on PRs and dispatches to catch packaging issues BEFORE tagging,
+    # and publishes to GitHub Releases when triggered by version tags or explicit publish.
+    needs: [js, go]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: pnpm install --frozen-lockfile
+      # Icon generation drives a hidden Electron window, so it needs a
+      # virtual display on headless runners.
+      - run: xvfb-run -a pnpm desktop:package:linux
+
+      # Upload package artifacts for testing and review on PRs / dispatches
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop-packages
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.rpm
+            apps/desktop/release/*.deb
+            apps/desktop/release/latest-linux.yml
+          if-no-files-found: warn
+
+      # The icon set (icns/ico/png) is generated here under Xvfb; the
+      # mac/Windows jobs reuse it instead of driving a hidden Electron
+      # window on headless runners.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-icons
+          path: apps/desktop/build/
+          if-no-files-found: error
+
+      # Publishes to a GitHub Release on version tags or explicit publish dispatch
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.rpm
+            apps/desktop/release/*.deb
+            apps/desktop/release/latest-linux.yml
+          fail_on_unmatched_files: false
+
+  package-mac:
+    # Builds the macOS Apple Silicon desktop packages (DMG + ZIP for
+    # auto-update). Runs on PRs/dispatches to catch packaging issues
+    # BEFORE tagging, publishes on version tags or explicit publish.
+    # Signing/notarization happen only when the secrets from
+    # docs/releasing.md are configured.
+    needs: [js, go, package-linux]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-icons
+          path: apps/desktop/build
+      - run: pnpm build:go
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+      - run: pnpm --filter @nomadvnc/desktop build
+      # An empty CSC_LINK is still "set", and electron-builder then tries to
+      # sign using the project directory. Drop it, and skip keychain
+      # discovery, when no Developer ID secret is configured.
+      - run: |
+          if [ -z "$CSC_LINK" ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          pnpm --filter @nomadvnc/desktop exec electron-builder --mac --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-desktop-packages
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/latest-mac.yml
+          if-no-files-found: warn
+
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/latest-mac.yml
+          fail_on_unmatched_files: false
+
+  package-windows:
+    # Builds the Windows 64-bit NSIS installer and the optional NomadVNC
+    # Host exe. Code signing of the installer happens only when the WIN_*
+    # secrets from docs/releasing.md exist. The host exe is attached
+    # unsigned, and it is not inside the viewer installer.
+    needs: [js, go, package-linux]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-icons
+          path: apps/desktop/build
+      - run: pnpm build:go
+        env:
+          GOOS: windows
+          GOARCH: amd64
+      - run: pnpm --filter @nomadvnc/desktop build
+      # Same empty-CSC_LINK trap as the macOS job.
+      - shell: bash
+        run: |
+          if [ -z "$CSC_LINK" ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          pnpm --filter @nomadvnc/desktop exec electron-builder --win --publish never
+      # After electron-builder, so it does not wipe the release directory.
+      # The host stays out of latest.yml. The viewer auto-updater ignores it.
+      - run: pnpm build:host -- --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-packages
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/latest.yml
+          if-no-files-found: warn
+
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/latest.yml
+          fail_on_unmatched_files: false
+
+  package-android:
+    # Sideload APK for phones and the x86_64 emulator. Not a Play App
+    # Bundle. Signed with the upload key when those secrets exist, so a
+    # later Play listing can update the same install.
+    needs: [js, go]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - uses: android-actions/setup-android@v4
+        with:
+          # The legacy SDK "tools" package is gone. v3 asked for it and
+          # sdkmanager failed the release. platform-tools is the replacement.
+          packages: platform-tools
+      - run: pnpm install --frozen-lockfile
+      - name: Install Android SDK packages
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+      - name: Build the Go engine
+        working-directory: go-core
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+          gomobile init
+          mkdir -p ../apps/mobile/android/app/libs
+          gomobile bind -androidapi 24 \
+            -o ../apps/mobile/android/app/libs/mobile.aar \
+            -target=android/arm64,android/amd64 ./mobile
+      - name: Configure release signing
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          ANDROID_UPLOAD_STORE_BASE64: ${{ secrets.ANDROID_UPLOAD_STORE_BASE64 }}
+          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_UPLOAD_STORE_BASE64" ]; then
+            if [ "$REF_TYPE" = "tag" ]; then
+              echo "The Android upload keystore secrets are required to publish the APK."
+              exit 1
+            fi
+            echo "No upload keystore; this pull request APK is signed with the debug key."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "$HOME/.gradle"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          dest = Path(os.environ["RUNNER_TEMP"]) / "upload.jks"
+          dest.write_bytes(__import__("base64").b64decode(os.environ["ANDROID_UPLOAD_STORE_BASE64"]))
+          props = Path.home() / ".gradle" / "gradle.properties"
+          existing = props.read_text() if props.exists() else ""
+          lines = [
+              f"NOMADVNC_UPLOAD_STORE_FILE={dest}",
+              f"NOMADVNC_UPLOAD_STORE_PASSWORD={os.environ['ANDROID_UPLOAD_STORE_PASSWORD']}",
+              f"NOMADVNC_UPLOAD_KEY_ALIAS={os.environ['ANDROID_UPLOAD_KEY_ALIAS']}",
+              f"NOMADVNC_UPLOAD_KEY_PASSWORD={os.environ['ANDROID_UPLOAD_KEY_PASSWORD']}",
+          ]
+          props.write_text(existing + ("\n" if existing and not existing.endswith("\n") else "") + "\n".join(lines) + "\n")
+          PY
+      - name: Build the release APK
+        working-directory: apps/mobile/android
+        run: |
+          ./gradlew assembleRelease --no-daemon
+          version="$(node -p "require('../package.json').version")"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/NomadVNC-${version}.apk"
+          mkdir -p "$GITHUB_WORKSPACE/apps/mobile/release"
+          cp "$RUNNER_TEMP/NomadVNC-${version}.apk" "$GITHUB_WORKSPACE/apps/mobile/release/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apps/mobile/release/*.apk
+          if-no-files-found: error
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apps/mobile/release/*.apk
+          fail_on_unmatched_files: true

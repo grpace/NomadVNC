@@ -1,0 +1,16 @@
+# Normalize line endings and diff behavior across macOS/Windows/Linux.
+* text=auto eol=lf
+
+# Source files are text; enforce LF on checkout.
+*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml,toml,sql,css,html} text eol=lf
+
+# Go sources.
+*.go text eol=lf
+
+# Images and binaries: never mangle.
+*.{png,jpg,jpeg,ico,icns,exe,dmg,AppImage,rpm,deb,zip,tar.gz} binary
+*.{svg} text eol=lf
+
+# Lockfiles stay exact.
+pnpm-lock.yaml text eol=lf
+go.sum text eol=lf

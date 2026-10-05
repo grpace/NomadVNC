@@ -1,0 +1,77 @@
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, min_ios_version_supported
+prepare_react_native_project!
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+target 'NomadVNC' do
+  config = use_native_modules!
+
+  # NomadVNC: loopback HTTP server for viewer assets (NomadNativeModule.swift)
+  pod 'GCDWebServer', '~> 3.5'
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false,
+      # :ccache_enabled => true
+    )
+    # Xcode 16.3 and later reject fmt 11's consteval format strings.
+    # React Native 0.79 pins that fmt, and this copy ignores a predefined
+    # FMT_USE_CONSTEVAL, so teach the header to keep the build setting.
+    fmt_base = File.join(__dir__, "Pods/fmt/include/fmt/base.h")
+    if File.exist?(fmt_base)
+      File.chmod(0644, fmt_base)
+      text = File.read(fmt_base)
+      needle = "#if !defined(__cpp_lib_is_constant_evaluated)\n#  define FMT_USE_CONSTEVAL 0"
+      patched = "#if defined(FMT_USE_CONSTEVAL)\n// Honor -DFMT_USE_CONSTEVAL from the build.\n#elif !defined(__cpp_lib_is_constant_evaluated)\n#  define FMT_USE_CONSTEVAL 0"
+      if text.include?(needle) && !text.include?("Honor -DFMT_USE_CONSTEVAL")
+        File.write(fmt_base, text.sub(needle, patched))
+      end
+    end
+    # React Native launches codegen with an unquoted path. A checkout whose
+    # directory name contains a space then fails before the script starts.
+    installer.pods_project.targets.each do |target|
+      target.build_phases.each do |phase|
+        next unless phase.respond_to?(:shell_script) && phase.shell_script
+        phase.shell_script = phase.shell_script.gsub(
+          '/bin/sh -c "$WITH_ENVIRONMENT $SCRIPT_PHASES_SCRIPT"',
+          ". \"$WITH_ENVIRONMENT\"\n/bin/bash \"$SCRIPT_PHASES_SCRIPT\""
+        )
+      end
+    end
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |build_config|
+        current = build_config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"]
+        if current.nil? || current.to_f < 15.0
+          build_config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "15.1"
+        end
+      end
+      next unless target.name == "fmt"
+      target.build_configurations.each do |build_config|
+        defs = build_config.build_settings["GCC_PREPROCESSOR_DEFINITIONS"] || ["$(inherited)"]
+        defs = [defs] if defs.is_a?(String)
+        defs << "FMT_USE_CONSTEVAL=0" unless defs.include?("FMT_USE_CONSTEVAL=0")
+        build_config.build_settings["GCC_PREPROCESSOR_DEFINITIONS"] = defs
+      end
+    end
+  end
+end

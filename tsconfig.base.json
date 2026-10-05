@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@nomadvnc/domain": [
+        "packages/domain/src/index.ts"
+      ],
+      "@nomadvnc/platform-contracts": [
+        "packages/platform-contracts/src/index.ts"
+      ],
+      "@nomadvnc/viewer-shell": [
+        "packages/viewer-shell/src/index.ts"
+      ]
+    }
+  }
+}

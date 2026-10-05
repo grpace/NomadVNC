@@ -1,0 +1,65 @@
+# Node/PNPM
+node_modules/
+.pnpm-store/
+dist/
+dist-electron/
+apps/desktop/release/
+apps/mobile/release/
+build/
+.turbo/
+coverage/
+.npm
+.eslintcache
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Desktop (Electron)
+apps/desktop/out/
+apps/desktop/release/
+apps/mobile/release/
+
+# Web (Vite)
+
+# Mobile (React Native / Expo / Android / iOS)
+apps/mobile/.expo/
+apps/mobile/ios/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/app/build/
+apps/mobile/android/app/.cxx/
+apps/mobile/android/local.properties
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+# GoMobile bind outputs (built locally via NATIVE_SETUP.md)
+apps/mobile/ios/Mobile.xcframework/
+apps/mobile/android/app/libs/
+*.xcworkspace
+*.xcodeproj
+# ...except the NomadVNC iOS project itself, which CI needs to build the app
+!apps/mobile/ios/NomadVNC.xcodeproj
+
+# Go
+go-core/bin/
+go-core/.gomobile/
+go-core/vendor/
+
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Maintainer-only working notes (agent handoffs, planning, infra). Never public.
+docs/internal/

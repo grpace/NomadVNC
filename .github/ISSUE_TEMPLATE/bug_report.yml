@@ -1,0 +1,50 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Never paste passwords, Tailscale auth keys, or account tokens.**
+        Security issues: please use *Security → Report a vulnerability* instead.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Linux, macOS, Windows, Android, iOS, Account server (self-hosted)]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NomadVNC version
+      description: Desktop shows it under Settings → Updates.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: VNC server
+      placeholder: "macOS Screen Sharing / TigerVNC 1.14 / TightVNC 2.8 / …"
+  - type: dropdown
+    id: route
+    attributes:
+      label: How are you connecting?
+      options: [Local network (typed address), Through Tailscale, Not connection-related]
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. …\n2. …"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Optional. Remove any addresses or names you don't want public.

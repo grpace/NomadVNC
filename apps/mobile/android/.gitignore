@@ -1,0 +1,4 @@
+# Never commit signing keys
+*.keystore
+# Local-only sandbox settings (build-from-source composite)
+settings.local.gradle

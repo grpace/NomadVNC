@@ -1,0 +1,1 @@
+First release. Connect to a computer on your network, or from anywhere through a VPN. Tailscale is built in. No account required.

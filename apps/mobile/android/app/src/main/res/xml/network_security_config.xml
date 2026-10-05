@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NomadVNC: the viewer assets and VNC session WebSockets run over
+     cleartext loopback HTTP/WS (http://127.0.0.1:<port>). This config
+     permits cleartext ONLY for 127.0.0.1; everything else keeps the
+     platform default (cleartext denied). -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

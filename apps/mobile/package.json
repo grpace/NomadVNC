@@ -1,0 +1,38 @@
+{
+  "name": "@nomadvnc/mobile",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "react-native start",
+    "ios": "react-native run-ios",
+    "android": "react-native run-android",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run",
+    "sync-viewer-assets": "node ../../scripts/sync-mobile-viewer-assets.mjs"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "15.0.1",
+    "@react-native-community/cli-platform-android": "15.0.1",
+    "@react-native-community/cli-platform-ios": "15.0.1",
+    "@react-native/babel-preset": "0.79.2",
+    "@react-native/codegen": "0.79.2",
+    "@react-native/gradle-plugin": "0.79.2",
+    "@react-native/metro-config": "0.79.2",
+    "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@nomadvnc/domain": "workspace:*",
+    "@nomadvnc/platform-contracts": "workspace:*",
+    "@nomadvnc/viewer-shell": "workspace:*",
+    "react": "^19.1.0",
+    "react-native": "0.79.2",
+    "react-native-keychain": "^10.0.0",
+    "react-native-safe-area-context": "~5.4.1",
+    "react-native-webview": "^13.13.1"
+  }
+}

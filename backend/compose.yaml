@@ -1,0 +1,47 @@
+# Local / evaluation stack: Postgres + the backend + Mailpit (a mail
+# catcher). Sign-in emails land in Mailpit's inbox at http://localhost:8025
+# instead of being delivered. For production, see docs/self-hosting.md.
+name: nomadvnc-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nomad
+      POSTGRES_PASSWORD: nomad-dev
+      POSTGRES_DB: nomadvnc
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nomad"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mail:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+
+  backend:
+    build: .
+    ports:
+      - "3200:3200"
+    environment:
+      DATABASE_URL: postgres://nomad:nomad-dev@db:5432/nomadvnc
+      JWT_SECRET: dev-only-not-a-secret-change-me-in-production
+      SMTP_HOST: mail
+      SMTP_PORT: "1025"
+      MAIL_FROM: NomadVNC <signin@nomadvnc.localhost>
+      # Opt-in for credential sync / sharing (never commit a real key):
+      #   DATA_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+      #   DATA_KEY=$DATA_KEY docker compose -f backend/compose.yaml up --build
+      DATA_KEY: ${DATA_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+
+volumes:
+  pgdata:

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*",
+    "../../packages/domain/src/**/*",
+    "../../packages/platform-contracts/src/**/*",
+    "../../packages/viewer-shell/src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "../../packages/viewer-shell/src/**/*.test.ts"
+  ]
+}

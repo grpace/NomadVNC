@@ -1,0 +1,11 @@
+NomadVNC is a remote desktop app for any computer you have access to. Connect on your local network, or from anywhere through a VPN. Tailscale is built in and stays off until you sign in. No port forwarding, and no account required.
+
+Save the computers you use most and open them in one tap, or type an address when a computer is not saved yet. Sign in with Tailscale to see the machines on your tailnet. Choose Touch or Trackpad mode, pinch to zoom, and use the on-screen keyboard for Ctrl, Alt, and function keys. Send your clipboard to the remote computer, and receive its clipboard. Choose Fit Screen or Actual Size, and a display region when you only need part of the screen.
+
+An optional Nomad account syncs saved machines across your devices and lets you share a machine with someone by email. You can also self-host that server.
+
+NomadVNC is a VNC client. It connects to standard VNC servers, including macOS Screen Sharing, TigerVNC, TightVNC, UltraVNC, and WayVNC. It does not share your own screen. The computer you connect to needs its own VNC server.
+
+Saved machines and passwords stay on this device unless you turn on account sync. Passwords are kept in the device's secure storage. There are no ads and no analytics. You can delete an account from the app.
+
+NomadVNC is free and open source under the Apache License 2.0. It is not affiliated with Tailscale.

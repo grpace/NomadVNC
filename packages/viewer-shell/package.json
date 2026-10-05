@@ -1,0 +1,23 @@
+{
+  "name": "@nomadvnc/viewer-shell",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bootstrap": "./src/bootstrap.mjs",
+    "./input": "./src/input.mjs"
+  },
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@novnc/novnc": "^1.5.0"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

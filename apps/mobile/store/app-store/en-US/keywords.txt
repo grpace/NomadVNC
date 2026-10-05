@@ -1,0 +1,1 @@
+vnc,remote desktop,tailscale,screen sharing,vnc client,remote access,clipboard,homelab

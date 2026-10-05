@@ -1,0 +1,181 @@
+{
+  "name": "@nomadvnc/desktop",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "NomadVNC desktop client (Electron)",
+  "homepage": "https://github.com/grpace/NomadVNC",
+  "author": {
+    "name": "Greg Pace",
+    "email": "hello@greg.tech"
+  },
+  "copyright": "Copyright © 2026 Greg Pace",
+  "type": "module",
+  "main": "./dist-electron/main/main.js",
+  "scripts": {
+    "dev": "vite --config vite.renderer.config.ts",
+    "dev:electron": "pnpm run build:main && concurrently -k --success first \"vite --config vite.renderer.config.ts\" \"wait-on tcp:127.0.0.1:5173 && cross-env NOMADVNC_DESKTOP_URL=http://127.0.0.1:5173 electron ./dist-electron/main/main.js\"",
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "build:main": "tsup src/main/main.ts --format esm --platform node --target node20 --outDir dist-electron/main --external electron && tsup src/preload/preload.ts --format cjs --platform node --target node20 --outDir dist-electron/preload --external electron",
+    "generate:icons": "electron --no-sandbox ./scripts/generate-icons.cjs",
+    "generate:icons:desktop": "electron --no-sandbox ./scripts/generate-icons.cjs --desktop-only",
+    "start": "npm run generate:icons:desktop && npm run build && electron ./dist-electron/main/main.js",
+    "package": "npm run generate:icons:desktop && npm run build && electron-builder",
+    "package:linux": "npm run generate:icons:desktop && npm run build && electron-builder --linux --publish never",
+    "package:mac": "npm run generate:icons:desktop && npm run build && electron-builder --mac --publish never",
+    "package:win": "npm run generate:icons:desktop && npm run build && electron-builder --win --publish never",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@nomadvnc/domain": "workspace:*",
+    "@nomadvnc/platform-contracts": "workspace:*",
+    "@nomadvnc/viewer-shell": "workspace:*",
+    "electron-updater": "^6.8.9",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "41.10.7",
+    "electron-builder": "^26.15.3",
+    "electron-builder-squirrel-windows": "26.15.3",
+    "jsdom": "^26.1.0",
+    "vite": "^6.4.3",
+    "vitest": "4.1.11",
+    "wait-on": "^9.0.5"
+  },
+  "build": {
+    "appId": "com.nomadvnc.desktop",
+    "productName": "NomadVNC",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "protocols": [
+      {
+        "name": "NomadVNC",
+        "schemes": ["nomadvnc"]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "grpace",
+      "repo": "NomadVNC"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "../../LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "../../THIRD_PARTY_NOTICES.md",
+          "to": "THIRD_PARTY_NOTICES.md"
+        },
+        {
+          "from": "../../go-core/bin",
+          "filter": [
+            "nomadvnc-sidecar.exe"
+          ],
+          "to": "sidecar"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NomadVNC",
+      "runAfterFinish": true,
+      "uninstallDisplayName": "NomadVNC",
+      "license": "../../LICENSE",
+      "include": "installer.nsh",
+      "guid": "c4a8e2f1-9d37-4b6a-8e15-2f7c0a9b3d64",
+      "uninstallUrlHelp": "https://greg.tech/nomadvnc/support",
+      "uninstallUrlInfoAbout": "https://greg.tech/nomadvnc",
+      "uninstallUrlUpdateInfo": "https://github.com/grpace/NomadVNC/releases",
+      "uninstallUrlReadme": "https://github.com/grpace/NomadVNC#readme"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "../../LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "../../THIRD_PARTY_NOTICES.md",
+          "to": "THIRD_PARTY_NOTICES.md"
+        },
+        {
+          "from": "../../go-core/bin",
+          "filter": [
+            "nomadvnc-sidecar"
+          ],
+          "to": "sidecar"
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Network",
+      "executableName": "nomadvnc",
+      "maintainer": "Greg Pace <hello@greg.tech>",
+      "synopsis": "Remote desktop (VNC) over your network or Tailscale",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "extraResources": [
+        {
+          "from": "../../LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "../../THIRD_PARTY_NOTICES.md",
+          "to": "THIRD_PARTY_NOTICES.md"
+        },
+        {
+          "from": "../../go-core/bin",
+          "filter": [
+            "nomadvnc-sidecar"
+          ],
+          "to": "sidecar"
+        }
+      ]
+    }
+  }
+}
