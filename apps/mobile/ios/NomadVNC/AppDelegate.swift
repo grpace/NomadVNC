@@ -3,6 +3,13 @@ import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 
+#if DEBUG && !targetEnvironment(simulator)
+// Linked from React's dev support. Declared here so the device build can
+// turn the banner off without a bridging header.
+@_silgen_name("RCTDevLoadingViewSetEnabled")
+func RCTDevLoadingViewSetEnabled(_ enabled: Bool)
+#endif
+
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
   var window: UIWindow?
@@ -35,6 +42,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+#if DEBUG && !targetEnvironment(simulator)
+    // The debug loading view says "Connect to Metro to develop JavaScript"
+    // in its own window. On a phone that window covers the app, then leaves
+    // the screen black after the message hides.
+    RCTDevLoadingViewSetEnabled(false)
+#endif
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -104,9 +117,12 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
   }
 
   override func bundleURL() -> URL? {
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
+    // The simulator loads from Metro so reload stays available.
     RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
 #else
+    // Device builds already embed main.jsbundle. Waiting on Metro leaves a
+    // black screen when the phone cannot reach the Mac.
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
   }

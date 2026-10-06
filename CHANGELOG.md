@@ -3,6 +3,11 @@
 All notable changes to NomadVNC. Versions follow
 [semantic versioning](https://semver.org/); dates are release dates.
 
+## Unreleased
+
+- On iPhone, launch no longer flashes "Connect to Metro to develop JavaScript" and then goes black. That message was a debug window drawn over the app.
+- `proxy-addr` is 2.0.8 and Metro uses `image-size` 2.0.4, which closes the open dependency advisories.
+
 ## 1.0.0 — 2026-10-05
 
 First public release.
