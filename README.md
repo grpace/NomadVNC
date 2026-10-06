@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://greg.tech/nomadvnc/">Website</a>
+  ·
   <a href="https://greg.tech/nomadvnc/privacy">Privacy</a>
   ·
   <a href="https://greg.tech/nomadvnc/support">Support</a>
