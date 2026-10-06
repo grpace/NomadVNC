@@ -6,6 +6,8 @@ All notable changes to NomadVNC. Versions follow
 ## Unreleased
 
 - On iPhone, launch no longer flashes "Connect to Metro to develop JavaScript" and then goes black. That message was a debug window drawn over the app.
+- The privacy policy now names the current sign-in email address, covers any VPN, desktop update checks, and NomadVNC Host, and gives the current steps to delete an account on a phone.
+- The macOS install notes cover **Open Anyway** in System Settings, which macOS 15 and later require for unsigned apps.
 - `proxy-addr` is 2.0.8 and Metro uses `image-size` 2.0.4, which closes the open dependency advisories.
 
 ## 1.0.0 — 2026-10-05
