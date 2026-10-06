@@ -38,7 +38,7 @@
       "esbuild"
     ],
     "patchedDependencies": {
-      "react-native-webview": "/home/grpace/Coding Projects/NomadVNC/patches/react-native-webview.patch",
+      "react-native-webview": "patches/react-native-webview.patch",
       "metro@0.82.5": "patches/metro@0.82.5.patch"
     },
     "overrides": {
