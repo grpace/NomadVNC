@@ -63,9 +63,16 @@ on **Settings → Window → Use Native Window Frame** (or launch with
 
 Open `NomadVNC-<version>-arm64.dmg` and drag NomadVNC to Applications.
 
-Until releases are signed and notarized, macOS blocks the first launch
-("NomadVNC can't be opened" or "is damaged"). Either right-click the app →
-**Open** → **Open**, or run once:
+Until releases are signed and notarized, macOS blocks the first launch.
+
+- **"NomadVNC can't be opened" (macOS 15 Sequoia and later):** try to
+  open the app once, then go to **System Settings → Privacy & Security**,
+  scroll down, click **Open Anyway**, and confirm. Right-click → **Open**
+  no longer skips this check.
+- **The same message on macOS 14 or earlier:** right-click the app →
+  **Open** → **Open**.
+- **"NomadVNC is damaged" (any version):** run this once, then open the
+  app as usual:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/NomadVNC.app
