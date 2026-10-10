@@ -3,7 +3,10 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install
+# --legacy-peer-deps: npm 10's peer-set resolution crashes on this tree
+# ("Cannot read properties of null (reading 'edgesOut')"). No runtime
+# package here relies on npm auto-installing peers.
+RUN npm install --legacy-peer-deps
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -18,7 +21,7 @@ ENV HOST=0.0.0.0
 ENV PORT=3200
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/*.sql ./dist/
 

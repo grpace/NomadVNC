@@ -9,6 +9,7 @@ All notable changes to NomadVNC. Versions follow
 - Sessions show **Slow** or **Not Responding** when the remote computer is late to answer, and say whether the network still reaches it. A session that stops answering for about 20 seconds reconnects on its own instead of freezing until you reconnect by hand.
 - **Reconnect** is always in the session toolbar (desktop and phone), so a stuck session can be cycled at once instead of waiting.
 - On a phone, sessions to a typed address are no longer held at low image quality. Auto quality took them for unreachable tailnet devices.
+- The account server's Docker image builds again. `npm install` crashed during peer-dependency resolution, so deploys after 1.0.0 failed and kept the old server running.
 
 - On iPhone, launch no longer flashes "Connect to Metro to develop JavaScript" and then goes black. That message was a debug window drawn over the app.
 - The privacy policy now names the current sign-in email address, covers any VPN, desktop update checks, and NomadVNC Host, and gives the current steps to delete an account on a phone.
