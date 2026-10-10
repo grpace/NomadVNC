@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 import type { AccountClient, BackendDeviceView, BackendSharedDeviceView } from "./accountClient";
 import type { AccountConfig } from "./accountConfig";
 import type { AccountSession } from "./accountSession";
@@ -47,6 +48,15 @@ export function AccountProvider({
   const [tick, setTick] = useState(0);
 
   useEffect(() => manager.subscribe(() => setTick((t) => t + 1)), [manager]);
+  useEffect(() => {
+    // Back from the background: keep the sign-in fresh (no-op when recent).
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void manager.refreshSessionIfDue();
+      }
+    });
+    return () => sub.remove();
+  }, [manager]);
   useEffect(() => {
     void manager.init().catch(() => {
       // init records a failed load as signed out. Swallowing here keeps

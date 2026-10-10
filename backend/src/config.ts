@@ -100,7 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BackendConfig 
     port: positiveNumber(env.PORT, 3200, "PORT"),
     databaseUrl: required(env.DATABASE_URL, "DATABASE_URL"),
     jwtSecret: required(env.JWT_SECRET, "JWT_SECRET"),
-    jwtExpiresIn: env.JWT_EXPIRES_IN ?? "24h",
+    jwtExpiresIn: env.JWT_EXPIRES_IN ?? "365d",
     publicAppUrl: (env.PUBLIC_APP_URL ?? "").replace(/\/+$/, ""),
     corsOrigin: env.CORS_ORIGIN ?? "",
     postalApiUrl: (env.POSTAL_API_URL ?? "").trim().replace(/\/+$/, ""),

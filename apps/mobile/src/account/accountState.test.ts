@@ -30,14 +30,14 @@ function memoryStore(): SecureStore & { data: Map<string, string> } {
   };
 }
 
-function fakeJwt(email: string): string {
+function fakeJwt(email: string, claims: Record<string, unknown> = {}): string {
   const b64url = (s: string) =>
     Buffer.from(s, "utf8")
       .toString("base64")
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=+$/, "");
-  return `header.${b64url(JSON.stringify({ email }))}.sig`;
+  return `header.${b64url(JSON.stringify({ email, ...claims }))}.sig`;
 }
 
 interface FakeClientOptions {
@@ -46,6 +46,7 @@ interface FakeClientOptions {
   consume?: (token: string) => Promise<string>;
   failDevices?: Error;
   failDelete?: Error;
+  refresh?: () => Promise<string>;
 }
 
 /** Minimal stub of the AccountClient surface the manager uses. */
@@ -62,6 +63,11 @@ function fakeClient(options: FakeClientOptions = {}) {
     },
     async logout() {
       calls.push("logout");
+    },
+    async refreshSession() {
+      calls.push("refreshSession");
+      if (options.refresh) return options.refresh();
+      return fakeJwt("user@example.test", { iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86_400 });
     },
     async deleteAccount() {
       calls.push("deleteAccount");
@@ -284,5 +290,71 @@ describe("AccountStateManager.subscribe", () => {
     const before = notifications;
     await manager.refreshDevices(); // signed out → no-op, no notify
     expect(notifications).toBe(before);
+  });
+});
+
+describe("AccountStateManager session refresh", () => {
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  const SESSION_KEY = "nomadvnc.account.session.v1";
+
+  async function seeded(token: string, options: FakeClientOptions = {}) {
+    const store = memoryStore();
+    await store.set(SESSION_KEY, JSON.stringify({ token, email: "user@example.test" }));
+    const made = makeManager(store, options);
+    return { store, ...made };
+  }
+
+  it("swaps an old token for a fresh one on launch and saves it", async () => {
+    const old = fakeJwt("user@example.test", { iat: nowSec() - 20 * 3600, exp: nowSec() + 4 * 3600 });
+    const fresh = fakeJwt("user@example.test", { iat: nowSec(), exp: nowSec() + 30 * 86_400 });
+    const { store, manager, calls } = await seeded(old, { refresh: async () => fresh });
+    await manager.init();
+    expect(calls).toContain("refreshSession");
+    expect(manager.session?.token).toBe(fresh);
+    expect(JSON.parse(store.data.get(SESSION_KEY) ?? "{}").token).toBe(fresh);
+    expect(calls).toContain("listDevices");
+  });
+
+  it("leaves a recent token alone", async () => {
+    const recent = fakeJwt("user@example.test", { iat: nowSec() - 60, exp: nowSec() + 30 * 86_400 });
+    const { manager, calls } = await seeded(recent);
+    await manager.init();
+    expect(calls).not.toContain("refreshSession");
+    expect(manager.session?.token).toBe(recent);
+  });
+
+  it("signs out when the server says the session is over", async () => {
+    const old = fakeJwt("user@example.test", { iat: nowSec() - 30 * 3600, exp: nowSec() - 6 * 3600 });
+    const { manager, calls } = await seeded(old, {
+      refresh: async () => {
+        throw new AccountApiError(401, "Token expired");
+      },
+    });
+    await manager.init();
+    expect(manager.session).toBeNull();
+    expect(manager.error).toMatch(/expired/);
+    expect(calls).not.toContain("listDevices");
+  });
+
+  it("keeps the session when the server can't be reached", async () => {
+    const old = fakeJwt("user@example.test", { iat: nowSec() - 20 * 3600, exp: nowSec() + 4 * 3600 });
+    const { manager } = await seeded(old, {
+      refresh: async () => {
+        throw new AccountApiError(0, "Account server unreachable");
+      },
+    });
+    await manager.init();
+    expect(manager.session?.token).toBe(old);
+  });
+
+  it("shares one request between overlapping refreshes", async () => {
+    const old = fakeJwt("user@example.test", { iat: nowSec() - 20 * 3600, exp: nowSec() + 4 * 3600 });
+    const { manager, calls } = await seeded(old);
+    await manager.init();
+    calls.length = 0;
+    // Force another refresh by pretending a day has passed.
+    const later = Date.now() + 24 * 3600 * 1000;
+    await Promise.all([manager.refreshSessionIfDue(later), manager.refreshSessionIfDue(later)]);
+    expect(calls.filter((c) => c === "refreshSession")).toHaveLength(1);
   });
 });

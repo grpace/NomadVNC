@@ -43,8 +43,8 @@ export function extractMagicToken(input: string): string | null {
   return null;
 }
 
-/** Reads the display email from the JWT payload without verifying it. */
-export function decodeAccountEmail(token: string): string | null {
+/** The JWT payload, unverified, or null if the token isn't a readable JWT. */
+function decodeTokenPayload(token: string): { email?: unknown; iat?: unknown; exp?: unknown } | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) {
@@ -56,9 +56,34 @@ export function decodeAccountEmail(token: string): string | null {
     const json = decodeURIComponent(
       Array.from(atob(padded), (ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""),
     );
-    const payload = JSON.parse(json) as { email?: unknown };
-    return typeof payload.email === "string" && payload.email !== "" ? payload.email : null;
+    const payload: unknown = JSON.parse(json);
+    return payload && typeof payload === "object" ? payload : null;
   } catch {
     return null;
   }
+}
+
+/** Reads the display email from the JWT payload without verifying it. */
+export function decodeAccountEmail(token: string): string | null {
+  const email = decodeTokenPayload(token)?.email;
+  return typeof email === "string" && email !== "" ? email : null;
+}
+
+/** Refresh once the token is this old (ms), well inside any sane lifetime. */
+export const TOKEN_REFRESH_AGE_MS = 12 * 60 * 60_000;
+
+/**
+ * Whether a session token should be swapped for a fresh one: it is at
+ * least TOKEN_REFRESH_AGE_MS old, or past half its lifetime (short
+ * self-hosted lifetimes), or its times can't be read.
+ */
+export function tokenRefreshDue(token: string, nowMs: number = Date.now()): boolean {
+  const payload = decodeTokenPayload(token);
+  const iat = typeof payload?.iat === "number" ? payload.iat * 1000 : null;
+  const exp = typeof payload?.exp === "number" ? payload.exp * 1000 : null;
+  if (iat === null || exp === null) {
+    return true;
+  }
+  const age = nowMs - iat;
+  return age >= TOKEN_REFRESH_AGE_MS || age >= (exp - iat) / 2;
 }

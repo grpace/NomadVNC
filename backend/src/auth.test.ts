@@ -1,3 +1,4 @@
+import jwt from "jsonwebtoken";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BackendConfig } from "../src/config.js";
@@ -251,6 +252,36 @@ describe("backend auth", () => {
 
     const anon = await request(app).post("/api/v1/auth/logout");
     expect(anon.status).toBe(401);
+  });
+
+  it("refreshes a live session and keeps revocation working", async () => {
+    await request(app).post("/api/v1/auth/magic-link").send({ email: "dana@example.test" });
+    const user = db.users[0];
+    if (!user) {
+      throw new Error("expected a user");
+    }
+    const token = signToken(config, user);
+
+    const refreshed = await request(app)
+      .post("/api/v1/auth/refresh")
+      .set("Authorization", `Bearer ${token}`);
+    expect(refreshed.status).toBe(200);
+    const next = jwt.decode(refreshed.body.token) as { sub: string; email: string; cv: number };
+    expect(next).toMatchObject({ sub: user.id, email: "dana@example.test", cv: user.credential_version });
+
+    await request(app).post("/api/v1/auth/logout").set("Authorization", `Bearer ${refreshed.body.token}`);
+    const afterLogout = await request(app)
+      .post("/api/v1/auth/refresh")
+      .set("Authorization", `Bearer ${refreshed.body.token}`);
+    expect(afterLogout.status).toBe(401);
+
+    const expired = jwt.sign({ sub: user.id, email: user.email, cv: user.credential_version }, config.jwtSecret, {
+      algorithm: "HS256",
+      expiresIn: -10,
+    });
+    const late = await request(app).post("/api/v1/auth/refresh").set("Authorization", `Bearer ${expired}`);
+    expect(late.status).toBe(401);
+    expect(late.body.error).toBe("Token expired");
   });
 
   it("redeems a link exactly once even when consumes race", async () => {

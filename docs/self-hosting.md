@@ -108,7 +108,7 @@ Check it's up with `curl https://nomad.example.com/health` → `{"ok":true}`.
 | `TRUST_PROXY` | behind a proxy | `1` when one reverse proxy (Caddy, nginx, Traefik) sits in front. Without it every user shares the proxy's IP for rate limiting. Leave empty if the port is exposed directly. |
 | `PUBLIC_APP_URL` | recommended | The server's public address, e.g. `https://nomad.example.com`. Used in sign-in and account-deletion emails; if empty, it's taken from each request. |
 | `PORT` | no | Listen port (default `3200`). |
-| `JWT_EXPIRES_IN` | no | Session lifetime (default `24h`). |
+| `JWT_EXPIRES_IN` | no | Session lifetime (default `365d`). The apps trade a token for a fresh one at launch, on return to the foreground, and hourly on desktop once it is 12 hours old or halfway to expiry. A session ends only after this long without opening the app, or at sign-out. |
 | `MAGIC_LINK_TTL_MINUTES` | no | Sign-in link lifetime (default `15`). |
 | `MAIL_*`, `SMTP_*`, `POSTAL_*` | for email | See [Email](#email). |
 

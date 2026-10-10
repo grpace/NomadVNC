@@ -22,6 +22,7 @@ import {
   keychainSecureStore,
   loadSession,
   saveSession,
+  tokenRefreshDue,
   type AccountSession,
   type SecureStore,
 } from "./accountSession";
@@ -53,6 +54,7 @@ export class AccountStateManager {
     getToken: () => string | null,
   ) => AccountClient;
   private readonly listeners = new Set<() => void>();
+  private refreshing: Promise<void> | null = null;
 
   constructor(deps: AccountStateDeps = {}) {
     this.store = deps.store ?? keychainSecureStore;
@@ -81,9 +83,52 @@ export class AccountStateManager {
     this.session = await loadSession(this.store);
     this.loading = false;
     this.emit();
+    await this.refreshSessionIfDue();
     if (this.session) {
       await this.refreshDevices();
     }
+  }
+
+  /**
+   * Swaps the session token for a fresh one once it is getting old, so an
+   * app that is opened now and then stays signed in. Being offline or a
+   * server error keeps the current token; only a 401 ends the session.
+   */
+  refreshSessionIfDue(nowMs: number = Date.now()): Promise<void> {
+    const session = this.session;
+    if (!session || !tokenRefreshDue(session.token, nowMs)) {
+      return Promise.resolve();
+    }
+    this.refreshing ??= this.refreshSession(session).finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async refreshSession(session: AccountSession): Promise<void> {
+    let token: string;
+    try {
+      token = await this.client.refreshSession();
+    } catch (err) {
+      if (err instanceof AccountApiError && err.status === 401 && this.session === session) {
+        await this.logout();
+        this.error = "Your sign-in expired. Please sign in again.";
+        this.emit();
+      }
+      return;
+    }
+    // Signed out (or in as someone else) while the request was out.
+    if (this.session !== session) {
+      return;
+    }
+    const next: AccountSession = { token, email: decodeAccountEmail(token) ?? session.email };
+    try {
+      await saveSession(next, this.store);
+    } catch {
+      // The fresh token still works this run; the old one stays on disk.
+    }
+    this.session = next;
+    this.emit();
   }
 
   async requestMagicLink(email: string): Promise<void> {

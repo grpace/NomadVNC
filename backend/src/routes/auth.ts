@@ -104,6 +104,18 @@ export function createAuthRouter(deps: AuthDeps): Router {
     res.json({ token: signToken(config, user) });
   }));
 
+  // Sliding session: a signed-in app trades its still-valid token for a
+  // fresh one, so it stays signed in as long as it is opened now and then.
+  // Logout and account deletion still revoke every token (credential_version).
+  router.post("/refresh", createRequireAuth(config, db), asyncRoute(async (req: Request, res: Response) => {
+    const user = (req as Request & { user?: { sub: string; email: string; cv: number } }).user;
+    if (!user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    res.json({ token: signToken(config, { id: user.sub, email: user.email, credential_version: user.cv }) });
+  }));
+
   router.post("/logout", createRequireAuth(config, db), asyncRoute(async (req: Request, res: Response) => {
     const user = (req as Request & { user?: { sub: string } }).user;
     if (!user) {

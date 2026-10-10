@@ -139,6 +139,19 @@ export class AccountClient {
     return body.token;
   }
 
+  /**
+   * Trades the current (still valid) session token for a fresh one. The
+   * server keeps sessions short; the app refreshes so the user stays
+   * signed in. A 401 means the session is over (expired or revoked).
+   */
+  async refreshSession(): Promise<string> {
+    const body = await this.request<{ token: string }>("/api/v1/auth/refresh", { method: "POST" });
+    if (!body.token) {
+      throw new AccountApiError(500, "Session refresh returned no token");
+    }
+    return body.token;
+  }
+
   async logout(): Promise<void> {
     await this.request("/api/v1/auth/logout", { method: "POST" });
   }

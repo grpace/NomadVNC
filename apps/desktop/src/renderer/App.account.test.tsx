@@ -8,10 +8,10 @@ import { loadSavedMachines, persistSavedMachines } from "./localMachines";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
-function fakeJwt(email: string): string {
+function fakeJwt(email: string, claims: Record<string, unknown> = {}): string {
   const encode = (value: string): string =>
     btoa(unescape(encodeURIComponent(value))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${encode('{"alg":"HS256"}')}.${encode(JSON.stringify({ sub: "u-1", email }))}.sig`;
+  return `${encode('{"alg":"HS256"}')}.${encode(JSON.stringify({ sub: "u-1", email, ...claims }))}.sig`;
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -256,6 +256,31 @@ describe("App account tab", () => {
     expect(keyring.setAccountToken).toHaveBeenCalledWith(fakeJwt("carol@example.test"));
     expect(container.textContent).toContain("carol@example.test");
     expect(buttonByText(container, "Account ✓")).toBeTruthy();
+  });
+
+  it("refreshes an aging stored session on boot and keeps the new token", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const aging = fakeJwt("bob@example.test", { iat: nowSec - 20 * 3600, exp: nowSec + 4 * 3600 });
+    const fresh = fakeJwt("bob@example.test", { iat: nowSec, exp: nowSec + 30 * 86_400 });
+    const keyring = fixedKeyring(aging);
+    fetchFn.mockImplementation(async (url: string) =>
+      url.endsWith("/api/v1/auth/refresh")
+        ? jsonResponse(200, { token: fresh })
+        : jsonResponse(200, { ok: true }),
+    );
+    await renderApp(keyring);
+    expect(fetchFn).toHaveBeenCalledWith(
+      `${DEFAULT_ACCOUNT_BASE_URL}/api/v1/auth/refresh`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(keyring.stored).toBe(fresh);
+  });
+
+  it("does not refresh a recent session", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const keyring = fixedKeyring(fakeJwt("bob@example.test", { iat: nowSec - 60, exp: nowSec + 30 * 86_400 }));
+    await renderApp(keyring);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/v1/auth/refresh"))).toBe(false);
   });
 
   it("restores a stored session on boot and signs out cleanly", async () => {

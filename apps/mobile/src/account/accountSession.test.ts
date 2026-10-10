@@ -17,6 +17,7 @@ import {
   magicLinkFromUrl,
   loadSession,
   saveSession,
+  tokenRefreshDue,
   type SecureStore,
 } from "./accountSession";
 import {
@@ -226,5 +227,31 @@ describe("account config", () => {
     expect(isValidAccountBaseUrl("http://10.0.0.2:3200")).toBe(true);
     expect(isValidAccountBaseUrl("ftp://x.test")).toBe(false);
     expect(isValidAccountBaseUrl("https://")).toBe(false);
+  });
+});
+
+describe("tokenRefreshDue", () => {
+  function jwtWith(claims: Record<string, unknown>): string {
+    const b64 = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+    return `h.${b64}.s`;
+  }
+  const now = Date.UTC(2026, 9, 10, 12);
+  const sec = (ms: number) => Math.floor(ms / 1000);
+
+  it("is not due for a token issued minutes ago", () => {
+    expect(tokenRefreshDue(jwtWith({ iat: sec(now - 5 * 60_000), exp: sec(now + 30 * 86_400_000) }), now)).toBe(false);
+  });
+
+  it("is due after twelve hours", () => {
+    expect(tokenRefreshDue(jwtWith({ iat: sec(now - 13 * 3_600_000), exp: sec(now + 29 * 86_400_000) }), now)).toBe(true);
+  });
+
+  it("is due past half of a short lifetime", () => {
+    expect(tokenRefreshDue(jwtWith({ iat: sec(now - 40 * 60_000), exp: sec(now + 20 * 60_000) }), now)).toBe(true);
+  });
+
+  it("is due when the times can't be read", () => {
+    expect(tokenRefreshDue("not-a-jwt", now)).toBe(true);
+    expect(tokenRefreshDue(jwtWith({ email: "a@b.test" }), now)).toBe(true);
   });
 });

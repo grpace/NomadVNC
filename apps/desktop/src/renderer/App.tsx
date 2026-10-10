@@ -26,7 +26,7 @@ import viewerInputUrl from "@nomadvnc/viewer-shell/input?url";
 import { AccountClient, AccountApiError, createAccountFetch } from "./accountClient";
 import type { BackendSharedDeviceView, BackendShareView, ShareGrantInput } from "./accountClient";
 import { loadAccountConfig, persistAccountConfig } from "./accountConfig";
-import { decodeAccountEmail, type AccountSession } from "./accountSession";
+import { decodeAccountEmail, tokenRefreshDue, type AccountSession } from "./accountSession";
 import {
   downloadAccountLibrary,
   loadSyncState,
@@ -198,6 +198,48 @@ export function App() {
     setSharingMachine(null);
     setStatus({ message: "Nomad session expired. Continuing in local mode.", variant: "error" });
   }, []);
+
+  /**
+   * Sliding sign-in: swap the account token for a fresh one once it is
+   * getting old, so a regularly used app never signs out. Offline or a
+   * server error keeps the current token; only a 401 ends the session.
+   */
+  const accountRefreshInFlightRef = useRef(false);
+  const refreshAccountSessionIfDue = useCallback(async (): Promise<void> => {
+    const session = accountSessionRef.current;
+    if (!session || accountRefreshInFlightRef.current || !tokenRefreshDue(session.token)) {
+      return;
+    }
+    accountRefreshInFlightRef.current = true;
+    try {
+      const token = await accountClient.refreshSession();
+      // Signed out (or in again) while the request was out.
+      if (accountSessionRef.current !== session) {
+        return;
+      }
+      try {
+        await window.nomadNative.setAccountToken?.(token);
+      } catch {
+        // Keyring trouble: the fresh token still works until restart.
+      }
+      const next = { token, email: decodeAccountEmail(token) ?? session.email };
+      accountSessionRef.current = next;
+      setAccountSession(next);
+    } catch (error) {
+      if (error instanceof AccountApiError && error.status === 401 && accountSessionRef.current === session) {
+        await handleAccountExpired();
+      }
+    } finally {
+      accountRefreshInFlightRef.current = false;
+    }
+  }, [accountClient, handleAccountExpired]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshAccountSessionIfDue();
+    }, 60 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshAccountSessionIfDue]);
 
   /** Best-effort refresh of the "shared with me" section; quiet unless the session died. */
   const refreshSharing = useCallback(async (): Promise<void> => {
@@ -1067,7 +1109,11 @@ export function App() {
       }
       await refreshTailnet(false);
       await refreshSidecarStatus();
-      const session = await restoreAccountSession();
+      const restored = await restoreAccountSession();
+      if (restored) {
+        await refreshAccountSessionIfDue();
+      }
+      const session = accountSessionRef.current;
       if (session) {
         await synchronizeAccountLibrary(session.email, false);
       }
@@ -1085,7 +1131,7 @@ export function App() {
       unsubscribeAuthCallback?.();
       unsubscribeOpenSettings?.();
     };
-  }, [refreshSecureStorageStatus, refreshTailnet, refreshSidecarStatus, restoreAccountSession, synchronizeAccountLibrary]);
+  }, [refreshAccountSessionIfDue, refreshSecureStorageStatus, refreshTailnet, refreshSidecarStatus, restoreAccountSession, synchronizeAccountLibrary]);
 
   // --- Derived state ---
   const selectedPeer = useMemo(
