@@ -158,3 +158,21 @@ NomadVNC never reads your clipboard just to check whether it changed.
 connections and sharpens the picture once you stop moving), **Scale**
 (Fit Screen or Actual Size), and **Region** (monitor halves). Quality, scale, and
 region are remembered per saved device.
+
+## Slow or frozen sessions
+
+NomadVNC checks every few seconds that the remote computer is still
+answering. On desktop the badge next to the computer's name says
+**Live**, **Slow** (with the reply time), or **Not Responding**. On a
+phone a **Slow** chip appears at the top left of the screen.
+
+After about seven seconds without a reply, a **Not Responding** card
+says whether the network still reaches the computer. If it does, the
+computer's VNC server is busy or asleep. If it doesn't, the network path
+is down or the computer is off. Sessions dialed by address can't check
+the network, so the card doesn't say which. If nothing answers for about 20 seconds,
+NomadVNC drops the stuck connection and reconnects on its own.
+
+To cycle the connection without waiting, use **Reconnect** in the
+session toolbar (on a phone, the circular-arrow button). It works any
+time, including while a session looks fine but feels stuck.

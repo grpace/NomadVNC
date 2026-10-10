@@ -31,6 +31,8 @@ export interface MobileSession {
   deviceId?: string;
   /** Connection host, for tailnet path health (auto-quality). */
   host?: string;
+  /** Dialed by address, not over the tailnet: no tailnet path to sample. */
+  direct?: boolean;
   /** What the viewer title shows: the saved device's label, else the host. */
   label?: string;
 }
@@ -301,6 +303,7 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
         assetBaseUrl,
         username: username.trim() || undefined,
         host: built.input.host,
+        direct: built.input.direct ?? false,
         label: selectedPeer?.displayName ?? host.trim(),
       });
     } catch (err) {

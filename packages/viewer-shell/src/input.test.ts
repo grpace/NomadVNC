@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  DEAD_MS,
+  PROBE_AFTER_QUIET_MS,
+  STALLED_MS,
+  createLinkMonitor,
+  type LinkHealth,
   BUTTON_LEFT,
   BUTTON_MIDDLE,
   BUTTON_RIGHT,
@@ -337,5 +342,126 @@ describe("keysyms", () => {
 
   it("types text with CRLF as a single Return", () => {
     expect(keysymsForText("hi\r\nyo")).toEqual([0x68, 0x69, 0xff0d, 0x79, 0x6f]);
+  });
+});
+
+describe("link monitor", () => {
+  function setup() {
+    let clock = 0;
+    const probes: number[] = [];
+    const health: LinkHealth[] = [];
+    let deaths = 0;
+    let refreshes = 0;
+    const monitor = createLinkMonitor({
+      now: () => clock,
+      sendProbe: () => probes.push(clock),
+      sendRefresh: () => {
+        refreshes += 1;
+      },
+      onHealth: (h) => health.push(h),
+      onDead: () => {
+        deaths += 1;
+      },
+    });
+    /** Advances the clock in 1s ticks, like the bootstrap's interval. */
+    const run = (ms: number) => {
+      for (let t = 0; t < ms; t += 1000) {
+        clock += 1000;
+        monitor.tick();
+      }
+    };
+    const at = (ms: number) => {
+      clock += ms;
+    };
+    return { monitor, probes, health, run, at, deaths: () => deaths, refreshes: () => refreshes };
+  }
+
+  it("probes only after a quiet spell", () => {
+    const h = setup();
+    h.run(2000);
+    expect(h.probes).toHaveLength(0);
+    h.run(1000);
+    expect(h.probes).toHaveLength(1);
+    // Data keeps flowing: no more probes.
+    for (let i = 0; i < 5; i += 1) {
+      h.monitor.received();
+      h.run(1000);
+    }
+    expect(h.probes).toHaveLength(1);
+  });
+
+  it("reports latency from a quick reply and stays good", () => {
+    const h = setup();
+    h.run(PROBE_AFTER_QUIET_MS + 500);
+    h.at(40);
+    h.monitor.received();
+    expect(h.monitor.health).toBe("good");
+    expect(h.health).toEqual([{ state: "good", latencyMs: 40 }]);
+  });
+
+  it("calls a slow reply slow", () => {
+    const h = setup();
+    h.run(3000);
+    h.at(900);
+    h.monitor.received();
+    expect(h.health.at(-1)).toEqual({ state: "slow", latencyMs: 900 });
+  });
+
+  it("marks an unanswered probe slow, then stalled, then dead once", () => {
+    const h = setup();
+    h.run(3000);
+    h.run(2000);
+    expect(h.health.at(-1)).toEqual({ state: "slow" });
+    h.run(STALLED_MS);
+    expect(h.health.at(-1)).toEqual({ state: "stalled" });
+    expect(h.deaths()).toBe(0);
+    // One full-screen request before giving up, not one per tick.
+    expect(h.refreshes()).toBe(1);
+    h.run(DEAD_MS);
+    expect(h.deaths()).toBe(1);
+    h.run(DEAD_MS);
+    h.monitor.received();
+    expect(h.deaths()).toBe(1);
+  });
+
+  it("recovers from stalled when the reply finally arrives", () => {
+    const h = setup();
+    h.run(3000 + STALLED_MS + 1000);
+    expect(h.monitor.health).toBe("stalled");
+    h.monitor.received();
+    expect(h.monitor.health).toBe("slow");
+    h.run(3000);
+    h.at(30);
+    h.monitor.received();
+    // Smoothed latency comes down over a few quick replies.
+    for (let i = 0; i < 10; i += 1) {
+      h.run(3000);
+      h.at(30);
+      h.monitor.received();
+    }
+    expect(h.monitor.health).toBe("good");
+  });
+
+  it("does not count frozen timers as silence", () => {
+    const h = setup();
+    h.run(3000);
+    expect(h.probes).toHaveLength(1);
+    // The app was in the background for a minute.
+    h.at(60_000);
+    h.monitor.tick();
+    expect(h.deaths()).toBe(0);
+    expect(h.monitor.health).toBe("good");
+    h.run(2000);
+    expect(h.probes).toHaveLength(1);
+    h.run(1000);
+    expect(h.probes).toHaveLength(2);
+  });
+
+  it("sends at most one probe at a time", () => {
+    const h = setup();
+    h.monitor.probe();
+    h.monitor.probe();
+    h.run(4000);
+    expect(h.probes).toHaveLength(1);
   });
 });

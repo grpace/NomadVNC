@@ -82,7 +82,13 @@ export type ViewerCommand =
  */
 export type ViewerEvent =
   | { type: "viewerReady" }
-  | { type: "viewerState"; state: "connected" | "disconnected" | "credentialsRequired" }
+  | { type: "viewerState"; state: "connected" | "credentialsRequired" }
+  /**
+   * The RFB connection ended. `reason: "stalled"` means the viewer closed
+   * it itself because the server stopped answering probes (see
+   * `viewerHealth`), so the app should reconnect.
+   */
+  | { type: "viewerState"; state: "disconnected"; reason?: "stalled" }
   /**
    * The server rejected the credentials (RFB security failure, e.g. a wrong
    * VNC password). Terminal for this connection: retrying with the same
@@ -105,7 +111,54 @@ export type ViewerEvent =
    * Reply to `queryConnection`. `live` means the RFB socket is still open,
    * so the app should keep the session instead of reconnecting.
    */
-  | { type: "viewerAlive"; live: boolean };
+  | { type: "viewerAlive"; live: boolean }
+  /**
+   * Link health while connected (`createLinkMonitor` in `input.mjs`): sent
+   * when the state changes and, at most every few seconds, when latency
+   * moves. "slow" means replies are late; "stalled" means nothing has come
+   * back for several seconds. A stall that lasts ends the connection with
+   * `viewerState: disconnected, reason: "stalled"`.
+   */
+  | { type: "viewerHealth"; state: "good" | "slow" | "stalled"; latencyMs?: number };
+
+/**
+ * Tailnet path sample used to explain a stall (structurally the
+ * platform-contracts `PeerPathInfo`). `latencyMs` is present only when a
+ * disco ping to the peer was answered.
+ */
+export interface StallPathSample {
+  found: boolean;
+  latencyMs?: number;
+}
+
+/**
+ * Plain-language reason for a `stalled` session: the network, the
+ * computer, or not known. `path` is `undefined` while a fresh sample is
+ * loading and `null` when no tailnet diagnosis is possible (direct
+ * address sessions, missing bridge).
+ */
+export function describeStall(
+  label: string,
+  path: StallPathSample | null | undefined,
+  online = true,
+): string {
+  if (!online) {
+    return "This device is offline. The session resumes when the network is back.";
+  }
+  if (path === undefined) {
+    return `Checking whether ${label} is still reachable…`;
+  }
+  if (path === null) {
+    return `${label} hasn't answered for several seconds. The network or the computer may be busy.`;
+  }
+  if (!path.found) {
+    return `${label} isn't on the tailnet right now. It may be asleep or offline.`;
+  }
+  if (typeof path.latencyMs === "number") {
+    return `The network reaches ${label} (${path.latencyMs} ms), but its VNC server isn't answering. The computer may be busy or asleep.`;
+  }
+  return `${label} isn't answering over the tailnet. The network path may have dropped, or the computer is asleep.`;
+}
 
 function escapeJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");

@@ -53,6 +53,25 @@ export interface ViewerEventData {
   level?: number;
   /** `viewerAlive`: the RFB socket is still open. */
   live?: boolean;
+  /** `viewerHealth`: smoothed probe round trip (ms). */
+  latencyMs?: number;
+  /** `viewerState: disconnected`: "stalled" when the viewer gave up on a silent link. */
+  reason?: string;
+}
+
+/** Link health from `viewerHealth` events; null until the first report. */
+export interface LinkHealth {
+  state: "good" | "slow" | "stalled";
+  latencyMs?: number;
+}
+
+/** A `viewerHealth` event as LinkHealth, or null if it isn't one. */
+export function linkHealthFromEvent(event: ViewerEventData): LinkHealth | null {
+  if (event.type !== "viewerHealth") return null;
+  if (event.state !== "good" && event.state !== "slow" && event.state !== "stalled") return null;
+  return typeof event.latencyMs === "number"
+    ? { state: event.state, latencyMs: event.latencyMs }
+    : { state: event.state };
 }
 
 /**

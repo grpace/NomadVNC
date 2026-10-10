@@ -2102,6 +2102,15 @@ body,
   animation: none;
 }
 
+.live-badge--stalled {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.live-badge--stalled .live-badge-dot {
+  background: var(--red);
+}
+
 .live-badge--checking {
   background: var(--bg-tab);
   color: var(--text-tertiary);
@@ -2170,6 +2179,19 @@ body,
   background: color-mix(in srgb, var(--bg-viewer) 55%, transparent);
   backdrop-filter: blur(2px);
   pointer-events: auto;
+}
+
+.viewer-stall-banner {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  z-index: 5;
+  transform: translateX(-50%);
+  width: min(400px, calc(100% - 2 * var(--space-4)));
+}
+
+.viewer-stall-banner .viewer-reconnect-card {
+  max-width: none;
 }
 
 .viewer-reconnect-card {

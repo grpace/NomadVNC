@@ -546,6 +546,18 @@ export function App() {
   const sessionEverLiveRef = useRef(false);
   const [viewerNeverConnected, setViewerNeverConnected] = useState(false);
   const [sessionKey, setSessionKey] = useState(0);
+  /** Proxy session replaced by a reconnect, stopped after the new viewer mounts. */
+  const supersededSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const superseded = supersededSessionIdRef.current;
+    if (!superseded) {
+      return;
+    }
+    supersededSessionIdRef.current = null;
+    void Promise.resolve().then(() => window.nomadNative.stopVncSession(superseded)).catch(() => {
+      // The old proxy session is already dead; cleanup is best-effort.
+    });
+  }, [sessionKey]);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeSessionRef = useRef<ActiveSession | null>(null);
   const peersRef = useRef<PeerDevice[]>([]);
@@ -645,6 +657,8 @@ export function App() {
 
   // --- Tailnet path health for the live session ---
   const [connectionPath, setConnectionPath] = useState<PeerPathInfo | null | undefined>(undefined);
+  /** Re-samples the path now (the viewer says the session stopped answering). */
+  const resampleConnectionPathRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!activeSession) {
       setConnectionPath(undefined);
@@ -681,11 +695,18 @@ export function App() {
 
     setConnectionPath(undefined);
     void refreshPath();
+    resampleConnectionPathRef.current = () => {
+      // "Checking…" until the fresh sample lands, so a stale verdict
+      // doesn't explain the stall.
+      setConnectionPath(undefined);
+      void refreshPath();
+    };
     const timer = window.setInterval(() => {
       void refreshPath();
     }, 15000);
     return () => {
       cancelled = true;
+      resampleConnectionPathRef.current = () => {};
       window.clearInterval(timer);
     };
   }, [activeSession]);
@@ -1777,11 +1798,10 @@ export function App() {
         return;
       }
 
-      try {
-        await window.nomadNative.stopVncSession(previous.sessionId);
-      } catch {
-        // The old proxy session is already dead; cleanup is best-effort.
-      }
+      // Stopped once the new viewer has mounted (effect on sessionKey). Stopping
+      // it now would let the old, still-mounted viewer report "disconnected"
+      // and start the auto-retry loop for a session that is being replaced.
+      supersededSessionIdRef.current = previous.sessionId;
 
       if (previous.machineId) {
         setSavedMachines((current) => touchSavedMachineConnection(current, previous.machineId as string));
@@ -2303,6 +2323,7 @@ export function App() {
                   defaultViewPrefsFromSettings(appSettings),
                 )}
                 connectionPath={connectionPath}
+                onLinkStalled={() => resampleConnectionPathRef.current()}
                 onViewPrefsChange={(prefs) => {
                   if (!activeSession.machineId) {
                     return;

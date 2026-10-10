@@ -59,3 +59,34 @@ export function createTouchController(options: {
 
 export function keysymForChar(ch: string): number | null;
 export function keysymsForText(text: string): number[];
+
+export type LinkHealthState = "good" | "slow" | "stalled";
+
+export interface LinkHealth {
+  state: LinkHealthState;
+  /** Smoothed probe round trip; absent while a reply is late. */
+  latencyMs?: number;
+}
+
+export interface LinkMonitor {
+  readonly health: LinkHealthState;
+  received(): void;
+  tick(): void;
+  probe(): void;
+}
+
+export const PROBE_AFTER_QUIET_MS: number;
+export const SLOW_RTT_MS: number;
+export const SLOW_WAIT_MS: number;
+export const STALLED_MS: number;
+export const DEAD_MS: number;
+export const TICK_GAP_RESET_MS: number;
+
+export function createLinkMonitor(options: {
+  sendProbe: () => void;
+  onHealth: (health: LinkHealth) => void;
+  onDead: () => void;
+  /** Sent once when a probe goes unanswered long enough to call it stalled. */
+  sendRefresh?: () => void;
+  now?: () => number;
+}): LinkMonitor;

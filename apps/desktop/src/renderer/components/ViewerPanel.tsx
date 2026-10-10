@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ViewerCommand } from "@nomadvnc/viewer-shell";
+import { describeStall, type ViewerCommand, type ViewerEvent } from "@nomadvnc/viewer-shell";
 import type { PeerPathInfo } from "@nomadvnc/platform-contracts";
 import {
   DEFAULT_MACHINE_VIEW_PREFS,
@@ -313,6 +313,37 @@ interface ViewerPanelProps {
    * sample is loading, `null` when diagnostics are unavailable.
    */
   connectionPath?: PeerPathInfo | null;
+  /** The viewer reports the session stopped answering (re-sample the path). */
+  onLinkStalled?: () => void;
+}
+
+type LinkHealth = Omit<Extract<ViewerEvent, { type: "viewerHealth" }>, "type">;
+
+/** "Live", or how the link is doing when it isn't keeping up. */
+function LinkHealthBadge({ health }: { health: LinkHealth | null }) {
+  if (health?.state === "stalled") {
+    return (
+      <span className="live-badge live-badge--stalled" title="Nothing has come back from the computer for several seconds">
+        <span className="live-badge-dot" />
+        Not Responding
+      </span>
+    );
+  }
+  if (health?.state === "slow") {
+    const latency = typeof health.latencyMs === "number" ? ` · ${health.latencyMs}ms` : "";
+    return (
+      <span className="live-badge live-badge--relay" title="The computer is answering, but slowly">
+        <span className="live-badge-dot" />
+        Slow{latency}
+      </span>
+    );
+  }
+  return (
+    <span className="live-badge">
+      <span className="live-badge-dot" />
+      Live
+    </span>
+  );
 }
 
 function formatPathLatency(path: PeerPathInfo): string {
@@ -390,6 +421,7 @@ export function ViewerPanel({
   initialViewPrefs,
   onViewPrefsChange,
   connectionPath,
+  onLinkStalled,
 }: ViewerPanelProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const prefs = initialViewPrefs ?? DEFAULT_MACHINE_VIEW_PREFS;
@@ -399,6 +431,10 @@ export function ViewerPanel({
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [syncClipboard, setSyncClipboard] = useState(true);
   const [viewerConnected, setViewerConnected] = useState(false);
+  const [linkHealth, setLinkHealth] = useState<LinkHealth | null>(null);
+  const linkStateRef = useRef<LinkHealth["state"] | null>(null);
+  const onLinkStalledRef = useRef(onLinkStalled);
+  onLinkStalledRef.current = onLinkStalled;
   const [activeOS, setActiveOS] = useState<(typeof OS_OPTIONS)[number]>(prefs.osTab);
   const [captureKeys, setCaptureKeys] = useState(prefs.captureKeys);
   const [autoQuality, setAutoQuality] = useState(prefs.autoQuality);
@@ -487,6 +523,9 @@ export function ViewerPanel({
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
+      // Only the current viewer frame. A frame being replaced by a reconnect
+      // must not report its own teardown. (Synthetic events have no source.)
+      if (event.source !== null && event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data;
       if (!data || typeof data.type !== "string") return;
 
@@ -499,6 +538,8 @@ export function ViewerPanel({
             onCredentialsRequired?.();
           }
           setViewerConnected(data.state === "connected");
+          linkStateRef.current = null;
+          setLinkHealth(null);
           if (
             data.state === "connected"
             || data.state === "disconnected"
@@ -507,6 +548,13 @@ export function ViewerPanel({
           ) {
             onViewerState?.(data.state);
           }
+          break;
+        case "viewerHealth":
+          if (data.state === "stalled" && linkStateRef.current !== "stalled") {
+            onLinkStalledRef.current?.();
+          }
+          linkStateRef.current = data.state;
+          setLinkHealth({ state: data.state, latencyMs: data.latencyMs });
           break;
         case "viewerClipboard":
           if (syncClipboardRef.current) {
@@ -719,12 +767,7 @@ export function ViewerPanel({
           <div className="viewer-toolbar-info">
             <div className="viewer-toolbar-label">
               <h2>{session.label}</h2>
-              {viewerConnected && (
-                <span className="live-badge">
-                  <span className="live-badge-dot" />
-                  Live
-                </span>
-              )}
+              {viewerConnected && <LinkHealthBadge health={linkHealth} />}
               <ConnectionPathBadge path={connectionPath} />
             </div>
             <p className="viewer-toolbar-host">
@@ -815,12 +858,12 @@ export function ViewerPanel({
 
           <div className="toolbar-divider" />
 
-          {connectionLost && (
+          {onReconnect && (
             <button
-              className={`btn ${isFullscreen ? "btn--toolbar" : "btn--primary btn--sm"}`}
+              className={`btn ${connectionLost && !isFullscreen ? "btn--primary btn--sm" : "btn--toolbar"}`}
               onClick={onReconnect}
               disabled={isReconnecting}
-              title="Reconnect to This Session"
+              title="Drop this connection and open a fresh one now"
             >
               <RefreshIcon style={iconSize} />
               <span className="btn-text">{isReconnecting ? "Reconnecting…" : "Reconnect"}</span>
@@ -1054,6 +1097,27 @@ export function ViewerPanel({
         className={`viewer-surface ${scaleMode === "actual" ? "viewer-surface--actual" : ""} ${scaleMode === "zoom" ? "viewer-surface--zoom" : ""}`}
         onClick={() => sendCommand({ type: "focus" })}
       >
+        {viewerConnected && !connectionLost && linkHealth?.state === "stalled" && (
+          <div className="viewer-stall-banner" role="status">
+            <div className="viewer-reconnect-card">
+              <p className="viewer-reconnect-title">Not Responding</p>
+              <p className="viewer-reconnect-desc">
+                {describeStall(session.label, connectionPath, navigator.onLine)}
+                {" "}NomadVNC reconnects on its own if this keeps up.
+              </p>
+              <button
+                className="btn btn--primary btn--sm"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onReconnect?.();
+                }}
+                disabled={isReconnecting}
+              >
+                Reconnect Now
+              </button>
+            </div>
+          </div>
+        )}
         {connectionLost && (
           <div className="viewer-reconnect-overlay" role="alert">
             <div className="viewer-reconnect-card">

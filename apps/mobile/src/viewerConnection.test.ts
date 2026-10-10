@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  linkHealthFromEvent,
   CONNECT_WATCHDOG_MS,
   isCredentialProblem,
   MAX_RECONNECT_ATTEMPTS,
@@ -110,5 +111,20 @@ describe("isCredentialProblem", () => {
     expect(isCredentialProblem("credentialsRequired")).toBe(true);
     expect(isCredentialProblem("disconnected")).toBe(false);
     expect(isCredentialProblem(undefined)).toBe(false);
+  });
+});
+
+describe("linkHealthFromEvent", () => {
+  it("reads health with and without latency", () => {
+    expect(linkHealthFromEvent({ type: "viewerHealth", state: "slow", latencyMs: 820 })).toEqual({
+      state: "slow",
+      latencyMs: 820,
+    });
+    expect(linkHealthFromEvent({ type: "viewerHealth", state: "stalled" })).toEqual({ state: "stalled" });
+  });
+
+  it("ignores other events and unknown states", () => {
+    expect(linkHealthFromEvent({ type: "viewerState", state: "connected" })).toBeNull();
+    expect(linkHealthFromEvent({ type: "viewerHealth", state: "weird" })).toBeNull();
   });
 });

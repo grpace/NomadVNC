@@ -1,5 +1,5 @@
 /**
- * NomadVNC viewer input: touch gestures and text entry.
+ * NomadVNC viewer input: touch gestures, text entry, and link health.
  *
  * Pure logic — no DOM access at import — so it is unit-tested directly
  * and loaded by the viewer bootstrap at runtime (`config.inputModuleUrl`).
@@ -27,6 +27,9 @@
  *   tap, then touch and drag  click and drag (left button held)
  *   two-finger drag           scroll (vertical and horizontal)
  *   pinch                     zoom the view (locally — not the remote screen)
+ *
+ * The link monitor (`createLinkMonitor`) tells a slow session from one that
+ * has stopped answering. See its comment below.
  */
 
 /** How far (px) a finger may wander and still count as a tap or press. */
@@ -400,4 +403,131 @@ export function keysymsForText(text) {
     if (keysym !== null) out.push(keysym);
   }
   return out;
+}
+
+/* ----- Link health ----- */
+
+/** Send a probe after this long (ms) with nothing received. */
+export const PROBE_AFTER_QUIET_MS = 2500;
+/** A probe answered slower than this (ms) counts as a slow link. */
+export const SLOW_RTT_MS = 500;
+/** An unanswered probe is "slow" after this long (ms)... */
+export const SLOW_WAIT_MS = 1500;
+/** ..."stalled" after this long (the user sees "Not responding")... */
+export const STALLED_MS = 5000;
+/** ...and dead after this long: the viewer drops it so the app reconnects. */
+export const DEAD_MS = 15000;
+/**
+ * Ticks run about once a second. A bigger gap means timers were frozen
+ * (phone app in the background, hidden window), not that the link stalled,
+ * so the clock restarts instead of counting the gap as silence.
+ */
+export const TICK_GAP_RESET_MS = 4000;
+/** Latency-only updates are sent at most this often (ms). */
+const LATENCY_REPORT_MS = 5000;
+
+/**
+ * Watches an RFB connection for silence. An idle VNC server sends nothing,
+ * so silence alone proves nothing: after a quiet spell the monitor sends a
+ * probe (a 1x1 non-incremental update request, which the server must
+ * answer) and times the reply. Any received data answers the probe.
+ *
+ * Health: "good" (answered quickly), "slow" (answered slowly, or a reply is
+ * late), "stalled" (no reply for STALLED_MS). On entering "stalled" the
+ * monitor calls `sendRefresh` once (a full-screen request, which every
+ * server must answer), so a server that skips tiny requests is never
+ * mistaken for a dead one. After DEAD_MS without a reply
+ * `onDead` runs once; the bootstrap closes the socket so the app's normal
+ * reconnect takes over. A half-open socket (common after a phone sleeps or
+ * changes network) otherwise looks open forever.
+ *
+ * Call `received()` for every incoming message and `tick()` about once a
+ * second while connected.
+ */
+export function createLinkMonitor(options) {
+  const now = options.now ?? (() => Date.now());
+  const { sendProbe, onHealth, onDead } = options;
+  const sendRefresh = options.sendRefresh ?? (() => {});
+  let lastRx = now();
+  let lastTick = lastRx;
+  let probeAt = null;
+  let smoothedRtt = null;
+  let health = "good";
+  let reportedLatency = null;
+  let lastReportAt = -Infinity;
+  let dead = false;
+
+  function report(next, latencyMs) {
+    const t = now();
+    const changed = next !== health;
+    const latencyMoved = latencyMs !== null && reportedLatency !== null
+      ? Math.abs(latencyMs - reportedLatency) >= Math.max(50, reportedLatency * 0.25)
+      : latencyMs !== reportedLatency;
+    if (!changed && !(latencyMoved && t - lastReportAt >= LATENCY_REPORT_MS)) {
+      return;
+    }
+    health = next;
+    reportedLatency = latencyMs;
+    lastReportAt = t;
+    onHealth(latencyMs === null ? { state: next } : { state: next, latencyMs });
+  }
+
+  function probe() {
+    if (dead || probeAt !== null) return;
+    probeAt = now();
+    try {
+      sendProbe();
+    } catch {
+      // A failed send leaves the probe unanswered; the timeout handles it.
+    }
+  }
+
+  return {
+    get health() {
+      return health;
+    },
+    received() {
+      if (dead) return;
+      const t = now();
+      lastRx = t;
+      if (probeAt === null) return;
+      const rtt = t - probeAt;
+      probeAt = null;
+      smoothedRtt = smoothedRtt === null ? rtt : Math.round(smoothedRtt * 0.7 + rtt * 0.3);
+      report(smoothedRtt >= SLOW_RTT_MS ? "slow" : "good", smoothedRtt);
+    },
+    tick() {
+      if (dead) return;
+      const t = now();
+      const gap = t - lastTick;
+      lastTick = t;
+      if (gap > TICK_GAP_RESET_MS) {
+        lastRx = t;
+        probeAt = null;
+        return;
+      }
+      if (probeAt !== null) {
+        const waited = t - probeAt;
+        if (waited >= DEAD_MS) {
+          dead = true;
+          onDead();
+        } else if (waited >= STALLED_MS) {
+          if (health !== "stalled") {
+            try {
+              sendRefresh();
+            } catch {
+              // Same as a failed probe: the timeout decides.
+            }
+          }
+          report("stalled", null);
+        } else if (waited >= SLOW_WAIT_MS && health === "good") {
+          report("slow", null);
+        }
+        return;
+      }
+      if (t - lastRx >= PROBE_AFTER_QUIET_MS) probe();
+    },
+    /** Probe now (e.g. the app just came back to the foreground). */
+    probe,
+  };
 }

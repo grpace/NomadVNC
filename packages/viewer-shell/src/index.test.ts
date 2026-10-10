@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { VIEWER_IFRAME_CSP, createViewerHtml } from "./index";
+import { VIEWER_IFRAME_CSP, createViewerHtml, describeStall } from "./index";
 
 const BOOTSTRAP_URL = "app://nomadvnc/vendor/viewer-bootstrap.mjs";
 
@@ -154,5 +154,27 @@ describe("bootstrap.mjs", () => {
     expect(bootstrap).toContain('document.getElementById("viewer-config")');
     expect(bootstrap).toContain("await import(config.bootstrapModuleUrl)");
     expect(bootstrap).not.toContain("${");
+  });
+});
+
+describe("describeStall", () => {
+  it("blames the local network first when offline", () => {
+    expect(describeStall("Lab", { found: true, latencyMs: 20 }, false)).toMatch(/offline/);
+  });
+
+  it("says the network is fine when the peer answers a ping", () => {
+    expect(describeStall("Lab", { found: true, latencyMs: 42 })).toBe(
+      "The network reaches Lab (42 ms), but its VNC server isn't answering. The computer may be busy or asleep.",
+    );
+  });
+
+  it("points at the path or the computer when the ping goes unanswered", () => {
+    expect(describeStall("Lab", { found: true })).toMatch(/isn't answering over the tailnet/);
+    expect(describeStall("Lab", { found: false })).toMatch(/isn't on the tailnet/);
+  });
+
+  it("stays generic without a tailnet sample", () => {
+    expect(describeStall("Lab", null)).toMatch(/hasn't answered/);
+    expect(describeStall("Lab", undefined)).toMatch(/Checking/);
   });
 });

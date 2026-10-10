@@ -138,6 +138,7 @@ export function SavedDevicesSection({
       assetBaseUrl,
       deviceId: device.id,
       host: built.input.host,
+      direct: built.input.direct ?? false,
       label: device.label,
     });
   }

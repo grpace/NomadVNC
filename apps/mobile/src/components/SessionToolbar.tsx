@@ -14,6 +14,8 @@ interface SessionToolbarProps {
   onToggleDisplay: () => void;
   onDisconnect: () => void;
   onHide: () => void;
+  /** Drop the connection and open a fresh one now; hidden when absent. */
+  onReconnect?: () => void;
 }
 
 /**
@@ -31,6 +33,7 @@ export function SessionToolbar({
   onToggleDisplay,
   onDisconnect,
   onHide,
+  onReconnect,
 }: SessionToolbarProps) {
   const isDark = theme.bg === darkTheme.bg;
   const styles = makeStyles(theme, isDark);
@@ -78,6 +81,11 @@ export function SessionToolbar({
             </ToolButton>
             {displayAttention && <View style={styles.attention} pointerEvents="none" />}
           </View>
+        )}
+        {onReconnect && (
+          <ToolButton label="Reconnect now" onPress={onReconnect} style={styles.tool}>
+            <ReconnectIcon color={icon} />
+          </ToolButton>
         )}
         <ToolButton
           label="Disconnect from VNC session"
@@ -160,6 +168,16 @@ function PowerIcon({ color, cutout }: { color: string; cutout: string }) {
   );
 }
 
+/** Circular arrow: a ring open at the top right, with an arrowhead there. */
+function ReconnectIcon({ color }: { color: string }) {
+  return (
+    <View style={iconStyles.reconnect}>
+      <View style={[iconStyles.reconnectRing, { borderColor: color, borderTopColor: "transparent" }]} />
+      <View style={[iconStyles.reconnectHead, { borderBottomColor: color }]} />
+    </View>
+  );
+}
+
 function Chevron({ color }: { color: string }) {
   return <View style={[iconStyles.chevron, { borderColor: color }]} />;
 }
@@ -235,6 +253,33 @@ const iconStyles = StyleSheet.create({
     width: 2,
     height: 9,
     borderRadius: 1,
+  },
+  reconnect: {
+    width: 18,
+    height: 18,
+  },
+  reconnectRing: {
+    position: "absolute",
+    left: 1,
+    top: 1,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    transform: [{ rotate: "45deg" }],
+  },
+  reconnectHead: {
+    position: "absolute",
+    left: 8,
+    top: -2,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 4,
+    borderRightWidth: 4,
+    borderBottomWidth: 6,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    transform: [{ rotate: "90deg" }],
   },
   chevron: {
     width: 9,

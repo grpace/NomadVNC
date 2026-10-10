@@ -28,6 +28,8 @@ import {
   reconnectDelayForAttempt,
   RESUME_PROBE_MS,
   resumeActionForState,
+  linkHealthFromEvent,
+  type LinkHealth,
 } from "../viewerConnection";
 import { sendViewerCommand, ViewerKeysBar, XK } from "../components/ViewerKeysBar";
 import { GestureGuide, POINTER_MODE_HINTS, POINTER_MODE_LABELS } from "../components/GestureGuide";
@@ -54,7 +56,7 @@ import {
   suggestAutoQuality,
 } from "../autoQuality";
 import type { PeerPathInfo } from "@nomadvnc/platform-contracts";
-import type { PointerMode } from "@nomadvnc/viewer-shell";
+import { describeStall, type PointerMode } from "@nomadvnc/viewer-shell";
 import {
   cardElevation,
   darkTheme as homeDarkTheme,
@@ -144,6 +146,9 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
   // while the first sample loads, `null` when diagnostics are unavailable.
   const [connectionPath, setConnectionPath] = useState<PeerPathInfo | null | undefined>(undefined);
   const connectionPathRef = useRef<PeerPathInfo | null | undefined>(undefined);
+  const resamplePathRef = useRef<() => void>(() => {});
+  const [linkHealth, setLinkHealth] = useState<LinkHealth | null>(null);
+  const linkStateRef = useRef<LinkHealth["state"] | null>(null);
   const autoQualityRef = useRef(false);
   const effectiveQualityRef = useRef(8);
   const idleBoostedRef = useRef(false);
@@ -189,7 +194,10 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
   // then refresh every 15s. Advisory only — a failed sample just means the
   // manual quality setting stands.
   useEffect(() => {
-    if (!session.host) {
+    // Typed addresses are dialed directly, not over the tailnet: a path
+    // sample would say "not found" and drag auto-quality down (desktop
+    // parity: direct sessions get no verdict).
+    if (!session.host || session.direct) {
       setConnectionPath(null);
       return;
     }
@@ -205,11 +213,17 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
     }
     setConnectionPath(undefined);
     void refreshPath();
+    // A stall re-samples at once, so the explanation isn't 15s stale.
+    resamplePathRef.current = () => {
+      setConnectionPath(undefined);
+      void refreshPath();
+    };
     const timer = setInterval(() => {
       void refreshPath();
     }, 15000);
     return () => {
       cancelled = true;
+      resamplePathRef.current = () => {};
       clearInterval(timer);
     };
     // session.host is stable for the screen's lifetime.
@@ -348,6 +362,8 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
       const parsed = parseViewerEvent(event.nativeEvent.data);
       if (!parsed) return;
       if (parsed.type === "viewerState") {
+        linkStateRef.current = null;
+        setLinkHealth(null);
         if (parsed.state === "connected") {
           clearTimers();
           attemptRef.current = 0;
@@ -377,6 +393,14 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
           setAuthPassword("");
           setConnState({ kind: "authFailed" });
         }
+      } else if (parsed.type === "viewerHealth") {
+        const health = linkHealthFromEvent(parsed);
+        if (!health) return;
+        if (health.state === "stalled" && linkStateRef.current !== "stalled") {
+          resamplePathRef.current();
+        }
+        linkStateRef.current = health.state;
+        setLinkHealth(health);
       } else if (parsed.type === "viewerIdle") {
         // TurboVNC lesson: once input stops, the image is static — boost to
         // lossless so it sharpens up (desktop parity).
@@ -804,6 +828,9 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
           onToggleDisplay={toggleDisplay}
           onDisconnect={() => void handleClose()}
           onHide={hideChrome}
+          onReconnect={
+            connState.kind === "connected" || connState.kind === "reconnecting" ? resetAndConnect : undefined
+          }
         />
       )}
 
@@ -901,6 +928,29 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
                   <ToolbarChevron color={theme.text} />
                   <Text style={styles.restoreLabel}>Toolbar</Text>
                 </Pressable>
+              </View>
+            )}
+            {connected && linkHealth?.state === "stalled" && (
+              <View style={styles.stallCard} accessibilityRole="alert">
+                <Text style={styles.tipTitle}>Not Responding</Text>
+                <Text style={styles.tipText}>
+                  {describeStall(session.label || session.host || "The computer", connectionPath)}
+                  {" "}Reconnects on its own if this keeps up.
+                </Text>
+                <View style={styles.tipActions}>
+                  <Pressable onPress={resetAndConnect} accessibilityRole="button" hitSlop={8}>
+                    <Text style={styles.link}>Reconnect Now</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+            {connected && linkHealth?.state === "slow" && (
+              <View style={styles.healthRow} pointerEvents="none">
+                <View style={styles.floatingChip}>
+                  <Text style={styles.floatingChipLabel}>
+                    {typeof linkHealth.latencyMs === "number" ? `Slow · ${linkHealth.latencyMs} ms` : "Slow"}
+                  </Text>
+                </View>
               </View>
             )}
             {connected && zoomLevel > 1.01 && (
@@ -1173,6 +1223,25 @@ function makeStyles(theme: Theme) {
       color: theme.text,
       fontSize: 13,
       fontWeight: "700",
+    },
+    healthRow: {
+      position: "absolute",
+      top: 10,
+      left: 10,
+      flexDirection: "row",
+    },
+    stallCard: {
+      position: "absolute",
+      left: 12,
+      right: 12,
+      top: 12,
+      borderRadius: 18,
+      padding: 14,
+      gap: 6,
+      backgroundColor: theme.card,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border,
+      ...cardElevation(theme),
     },
     tipCard: {
       position: "absolute",

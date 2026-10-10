@@ -72,7 +72,61 @@ const setStatus = (message, autoHide = false) => {
 rfb.addEventListener("connect", () => {
   setStatus("Connected", true);
   notifyParent({ type: "viewerState", state: "connected" });
+  startLinkMonitor();
 });
+
+/* ----- Link health ----- */
+// A socket can stay "open" long after the far end is gone (phone slept,
+// network changed, host froze). The monitor probes after quiet spells and
+// reports slow/stalled; when nothing answers for long enough it closes
+// the connection so the app's reconnect runs. Lives in input.mjs, so it
+// is off when that module failed to load.
+let stalledOut = false;
+let linkMonitor = null;
+let linkTimer = null;
+// noVNC opens its WebSocket in the constructor; a second listener sees
+// every incoming message without touching noVNC's own handler.
+const rawSocket = rfb._sock && rfb._sock._websocket;
+if (rawSocket && typeof rawSocket.addEventListener === "function") {
+  rawSocket.addEventListener("message", () => linkMonitor?.received());
+}
+
+function sendLinkProbe() {
+  if (rfb._rfbConnectionState !== "connected" || !(rfb._fbWidth > 0)) return;
+  RFB.messages.fbUpdateRequest(rfb._sock, false, 0, 0, 1, 1);
+}
+
+function sendLinkRefresh() {
+  if (rfb._rfbConnectionState !== "connected" || !(rfb._fbWidth > 0)) return;
+  RFB.messages.fbUpdateRequest(rfb._sock, false, 0, 0, rfb._fbWidth, rfb._fbHeight);
+}
+
+function startLinkMonitor() {
+  if (!input || typeof input.createLinkMonitor !== "function" || linkMonitor) return;
+  linkMonitor = input.createLinkMonitor({
+    sendProbe: sendLinkProbe,
+    sendRefresh: sendLinkRefresh,
+    onHealth(health) {
+      if (health.state === "stalled") {
+        setStatus("Not responding", false);
+      } else if (status && status.textContent === "Not responding") {
+        setStatus("Connected", true);
+      }
+      notifyParent({ type: "viewerHealth", ...health });
+    },
+    onDead() {
+      stalledOut = true;
+      rfb.disconnect();
+    },
+  });
+  linkTimer = setInterval(() => linkMonitor?.tick(), 1000);
+}
+
+function stopLinkMonitor() {
+  if (linkTimer) clearInterval(linkTimer);
+  linkTimer = null;
+  linkMonitor = null;
+}
 
 // A rejected password ends the connection with a security failure followed
 // by a disconnect. Report it once as authFailed and swallow that disconnect,
@@ -85,7 +139,13 @@ rfb.addEventListener("securityfailure", (event) => {
 });
 
 rfb.addEventListener("disconnect", (event) => {
+  stopLinkMonitor();
   if (authFailed) return;
+  if (stalledOut) {
+    setStatus("Not responding", false);
+    notifyParent({ type: "viewerState", state: "disconnected", reason: "stalled" });
+    return;
+  }
   const clean = event.detail?.clean ? "Disconnected" : "Connection lost";
   setStatus(clean, false);
   notifyParent({ type: "viewerState", state: "disconnected" });
@@ -239,6 +299,9 @@ window.addEventListener("message", (event) => {
           live = false;
         }
       }
+      // "Open" can be a half-open socket after sleep or a network change.
+      // Time a probe; the link monitor drops the session if nothing answers.
+      if (live) linkMonitor?.probe();
       notifyParent({ type: "viewerAlive", live });
       break;
     }

@@ -251,6 +251,25 @@ describe("App session flows", () => {
     }
   });
 
+  it("reconnects a live session on demand from the toolbar", async () => {
+    const native = installNativeStub();
+    persistSavedMachines([createMachine()]);
+    await renderApp();
+    await connectSeededMachine(native, "s3cret");
+    const firstFrame = container.querySelector(".viewer-frame iframe");
+
+    const reconnect = Array.from(container.querySelectorAll(".viewer-toolbar button")).find(
+      (button) => button.textContent === "Reconnect",
+    ) as HTMLButtonElement;
+    await clickAsync(reconnect);
+
+    expect(native.startVncSession).toHaveBeenCalledTimes(2);
+    // The old proxy goes away only once the replacement viewer is mounted.
+    expect(native.stopVncSession).toHaveBeenCalledWith("session-1");
+    expect(container.querySelector(".viewer-frame iframe")).not.toBe(firstFrame);
+    expect(container.textContent).not.toContain("Retrying");
+  });
+
   it("asks for a new password instead of retrying when the server rejects it", async () => {
     vi.useFakeTimers();
     try {

@@ -76,11 +76,18 @@ describe("ViewerPanel reconnect", () => {
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("hides reconnect controls while connected", () => {
-    renderPanel(baseProps({ connectionLost: false, onReconnect: vi.fn() }));
+  it("keeps an on-demand reconnect in the toolbar while connected, without the overlay", () => {
+    const onReconnect = vi.fn();
+    renderPanel(baseProps({ connectionLost: false, onReconnect }));
 
-    expect(reconnectButtons()).toHaveLength(0);
+    const buttons = reconnectButtons();
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].className).toContain("btn--toolbar");
     expect(container.querySelector(".viewer-reconnect-overlay")).toBeNull();
+    act(() => {
+      buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
   it("disables reconnect while a reconnect attempt is in flight", () => {
