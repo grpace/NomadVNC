@@ -3,7 +3,12 @@
 All notable changes to NomadVNC. Versions follow
 [semantic versioning](https://semver.org/); dates are release dates.
 
-## Unreleased
+## 1.1.0 — 2026-10-10
+
+- Nomad account sign-in no longer expires after a day. A sign-in lasts a year and renews whenever the app is opened, so an app you use stays signed in until you sign out. Self-hosted servers: remove `JWT_EXPIRES_IN` or set it to `365d` if you set it to `24h`.
+- Sessions show **Slow** or **Not Responding** when the remote computer is late to answer, and say whether the network still reaches it. A session that stops answering for about 20 seconds reconnects on its own instead of freezing until you reconnect by hand.
+- **Reconnect** is always in the session toolbar (desktop and phone), so a stuck session can be cycled at once instead of waiting.
+- On a phone, sessions to a typed address are no longer held at low image quality. Auto quality took them for unreachable tailnet devices.
 
 - On iPhone, launch no longer flashes "Connect to Metro to develop JavaScript" and then goes black. That message was a debug window drawn over the app.
 - The privacy policy now names the current sign-in email address, covers any VPN, desktop update checks, and NomadVNC Host, and gives the current steps to delete an account on a phone.
