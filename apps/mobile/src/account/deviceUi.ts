@@ -12,7 +12,14 @@ import type { BackendDeviceView, BackendSharedDeviceView } from "./accountClient
 
 export type SavedDeviceLike = Pick<
   BackendDeviceView | BackendSharedDeviceView,
-  "id" | "label" | "dnsName" | "lastKnownIp" | "vncPort" | "collectionName" | "tailscaleStableId"
+  | "id"
+  | "label"
+  | "dnsName"
+  | "lastKnownIp"
+  | "vncPort"
+  | "collectionName"
+  | "tailscaleStableId"
+  | "vncUsername"
 >;
 
 export type ConnectInputResult =

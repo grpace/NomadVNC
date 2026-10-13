@@ -3,6 +3,7 @@ import { AppState, Linking, StatusBar, useColorScheme } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AccountProvider, useAccount } from "./account/AccountContext";
 import { createMagicLinkGate, magicLinkFromUrl } from "./account/accountSession";
+import { loadLocalDevices, saveLocalDevices, setLocalDeviceUsername } from "./account/localDevices";
 import { takePendingAuthURL } from "./native/NomadNativeModule";
 import {
   darkTheme,
@@ -154,12 +155,41 @@ function Root() {
     }
   }, [account.loading]);
 
+  /** Saves a Mac username that got through to the saved device it belongs to. */
+  async function rememberDeviceUsername(deviceId: string, username: string): Promise<void> {
+    try {
+      if (account.session) {
+        // Owned devices only: a shared device's username is the owner's to set.
+        const owned = account.devices.find((device) => device.id === deviceId);
+        if (!owned) return;
+        await account.client.upsertDevice({
+          label: owned.label,
+          tailscaleStableId: owned.tailscaleStableId,
+          dnsName: owned.dnsName,
+          lastKnownIp: owned.lastKnownIp,
+          vncPort: owned.vncPort,
+          collectionName: owned.collectionName,
+          vncUsername: username,
+        });
+        await account.refreshDevices();
+        return;
+      }
+      const locals = await loadLocalDevices();
+      if (locals.some((device) => device.id === deviceId)) {
+        await saveLocalDevices(setLocalDeviceUsername(locals, deviceId, username));
+      }
+    } catch {
+      // Best effort: the session itself is already connected.
+    }
+  }
+
   if (session) {
     return (
       <ViewerScreen
         session={session}
         username={session.username}
         onClose={() => setSession(null)}
+        onUsernameAccepted={(deviceId, username) => void rememberDeviceUsername(deviceId, username)}
       />
     );
   }

@@ -7,7 +7,7 @@
 
 import { isTailnetAddress, manualStableId } from "@nomadvnc/domain";
 import { NomadNativeModule } from "../native/NomadNativeModule";
-import type { SavedDeviceLike } from "./deviceUi";
+import { savedDeviceHost, type SavedDeviceLike } from "./deviceUi";
 
 export type LocalDevice = SavedDeviceLike & { hasCredential: boolean };
 
@@ -16,6 +16,14 @@ export interface LocalDeviceInput {
   host: string;
   port: number;
   collectionName?: string;
+  /** macOS Screen Sharing account short name; empty clears it. */
+  vncUsername?: string;
+  /**
+   * Editing: the device to update. Its id (and keychain password) stay;
+   * an unchanged address keeps its identity. Otherwise a device with the
+   * same address and port is updated, or a new one is added.
+   */
+  id?: string;
 }
 
 const STORAGE_KEY = "nomadvnc.mobile.localDevices.v1";
@@ -42,6 +50,7 @@ export function sanitizeLocalDevices(raw: unknown): LocalDevice[] {
       lastKnownIp: typeof e.lastKnownIp === "string" ? e.lastKnownIp : undefined,
       vncPort: e.vncPort,
       collectionName: typeof e.collectionName === "string" && e.collectionName ? e.collectionName : undefined,
+      vncUsername: typeof e.vncUsername === "string" && e.vncUsername ? e.vncUsername : undefined,
       hasCredential: e.hasCredential === true,
     });
   }
@@ -55,20 +64,45 @@ export function upsertLocalDevice(
   newId: () => string,
 ): { devices: LocalDevice[]; device: LocalDevice } {
   const host = input.host.trim();
-  const identity = deviceIdentityForAddress(host);
-  const existing = devices.find((d) => d.tailscaleStableId === identity && d.vncPort === input.port);
+  const editing = input.id ? devices.find((d) => d.id === input.id) : undefined;
+  const sameAddress = editing !== undefined && savedDeviceHost(editing) === host;
+  const identity = sameAddress ? editing.tailscaleStableId : deviceIdentityForAddress(host);
+  const existing = editing ?? devices.find((d) => d.tailscaleStableId === identity && d.vncPort === input.port);
   const device: LocalDevice = {
     id: existing?.id ?? newId(),
     label: input.label.trim(),
     tailscaleStableId: identity,
-    dnsName: IPV4.test(host) ? undefined : host,
-    lastKnownIp: IPV4.test(host) ? host : undefined,
+    dnsName: sameAddress ? editing.dnsName : IPV4.test(host) ? undefined : host,
+    lastKnownIp: sameAddress ? editing.lastKnownIp : IPV4.test(host) ? host : undefined,
     vncPort: input.port,
     collectionName: input.collectionName?.trim() || undefined,
+    vncUsername: input.vncUsername?.trim() || undefined,
     hasCredential: existing?.hasCredential ?? false,
   };
   const rest = devices.filter((d) => d.id !== device.id);
   return { devices: [...rest, device], device };
+}
+
+/**
+ * Another saved device (not `exceptId`) already using this address and
+ * port, which an edit must not silently merge into.
+ */
+export function findAddressConflict<T extends SavedDeviceLike>(
+  devices: T[],
+  host: string,
+  port: number,
+  exceptId: string,
+): T | undefined {
+  const target = host.trim().toLowerCase();
+  return devices.find(
+    (d) => d.id !== exceptId && d.vncPort === port && savedDeviceHost(d).toLowerCase() === target,
+  );
+}
+
+/** Sets (or with "" clears) a device's macOS username. Pure. */
+export function setLocalDeviceUsername(devices: LocalDevice[], id: string, username: string): LocalDevice[] {
+  const value = username.trim() || undefined;
+  return devices.map((d) => (d.id === id ? { ...d, vncUsername: value } : d));
 }
 
 export function setLocalCredentialFlag(devices: LocalDevice[], id: string, hasCredential: boolean): LocalDevice[] {

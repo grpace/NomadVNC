@@ -60,7 +60,17 @@ When you're signed in, the home screen leads with your computers. Tap
 one to connect. Sign out stays on that card. The account server address
 and deleting the account are in **Settings → Account**. A typed address
 or a computer picked from your tailnet brings up **Connect** at the
-bottom of the screen.
+bottom of the screen. Picking a tailnet computer shows its own password,
+**Mac Username**, and port fields; typing an address deselects it.
+
+Tap **Edit** on a saved computer to change its name, address, port,
+group, **Mac Username**, or password (leave the password blank to keep
+it). Signed in, changes sync to your other devices. A shared computer
+keeps its address and port until you remove its shares.
+
+macOS Screen Sharing needs your Mac account's short name with the
+password. If you connect without one, the sign-in screen asks for both,
+and a name that works is saved to that computer.
 
 ### This device's Tailscale name
 

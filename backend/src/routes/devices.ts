@@ -24,6 +24,7 @@ export interface DeviceRow {
   vnc_port: number;
   label: string;
   collection_name: string | null;
+  vnc_username: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +37,8 @@ export interface DeviceView {
   vncPort: number;
   label: string;
   collectionName?: string;
+  /** macOS Screen Sharing account short name. */
+  vncUsername?: string;
   hasCredential: boolean;
   createdAt: string;
   updatedAt: string;
@@ -50,6 +53,7 @@ function toView(row: DeviceRow, hasCredential: boolean): DeviceView {
     vncPort: row.vnc_port,
     label: row.label,
     collectionName: row.collection_name ?? undefined,
+    vncUsername: row.vnc_username ?? undefined,
     hasCredential,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -64,6 +68,8 @@ export interface SharedDeviceView {
   vncPort: number;
   label: string;
   collectionName?: string;
+  /** macOS Screen Sharing account short name (goes with the shared password). */
+  vncUsername?: string;
   /** Owner's account email — who granted this. */
   sharedBy: string;
   permission: string;
@@ -139,15 +145,24 @@ export function createDevicesRouter(deps: DeviceDeps): Router {
     const dnsName = cleanString(body.dnsName, 253);
     const lastKnownIp = cleanString(body.lastKnownIp, 64);
     const collectionName = cleanString(body.collectionName, 200);
+    // Only a client that sends vncUsername changes it ("" clears it), so an
+    // app that predates the field can't wipe one set elsewhere.
+    const setsUsername = typeof body.vncUsername === "string";
+    if (setsUsername && (body.vncUsername as string).trim().length > 255) {
+      res.status(400).json({ error: "vncUsername is too long" });
+      return;
+    }
+    const vncUsername = setsUsername ? cleanString(body.vncUsername, 255) : null;
     const result = await db.query<DeviceRow>(
-      `INSERT INTO devices (owner_id, tailscale_stable_id, dns_name, last_known_ip, vnc_port, label, collection_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO devices (owner_id, tailscale_stable_id, dns_name, last_known_ip, vnc_port, label, collection_name, vnc_username)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (owner_id, tailscale_stable_id, vnc_port)
        DO UPDATE SET dns_name = EXCLUDED.dns_name, last_known_ip = EXCLUDED.last_known_ip,
                      label = EXCLUDED.label, collection_name = EXCLUDED.collection_name,
+                     vnc_username = CASE WHEN $9 THEN EXCLUDED.vnc_username ELSE devices.vnc_username END,
                      updated_at = now()
        RETURNING *`,
-      [ownerId, stableId, dnsName, lastKnownIp, port, label, collectionName],
+      [ownerId, stableId, dnsName, lastKnownIp, port, label, collectionName, vncUsername, setsUsername],
     );
     const row = result.rows[0] as DeviceRow;
     const withCredentials = await credentialIds(ownerId);
@@ -182,6 +197,7 @@ export function createDevicesRouter(deps: DeviceDeps): Router {
       vncPort: row.vnc_port,
       label: row.label,
       collectionName: row.collection_name ?? undefined,
+      vncUsername: row.vnc_username ?? undefined,
       sharedBy: row.owner_email,
       permission: row.permission,
       hasTailnetKey: row.has_key,

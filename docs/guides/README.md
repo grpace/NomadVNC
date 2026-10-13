@@ -89,7 +89,7 @@ touch gestures, the keyboard, and the clipboard.
 | "rejected the password" | Remember only the first 8 characters count. On macOS, set the VNC password under Screen Sharing → Computer Settings. |
 | The machine shows offline in the tailnet list | Tailscale running and signed in on it? Key expired? (See step 2.3.) |
 | Connected, but a black or frozen screen | Linux: the session may be locked or on Wayland without a portal grant. See [linux-server.md](linux-server.md#sharing-the-desktop-youre-already-using). |
-| macOS asks for a username | Enter your Mac account's short name under **Add macOS Username** on the machine. |
+| macOS asks for a username | Enter your Mac account's short name: on desktop under **Add macOS Username** on the machine; on a phone in **Mac Username** when you edit the saved computer or pick it from your tailnet, or on the sign-in screen that appears. |
 
 Still stuck? Check that the port answers from another device on the same
 network or tailnet: `nc -vz <address> 5900`.

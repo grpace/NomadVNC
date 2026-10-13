@@ -379,6 +379,9 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
               value={host}
               onChangeText={(v) => {
                 setHost(v);
+                // A typed address wins over a tailnet device; say so by
+                // dropping the selection rather than keeping a stale one.
+                if (v.trim() !== "") setSelectedPeer(null);
                 if (hostError) setHostError(validateHost(v));
               }}
               placeholder="192.168.1.10 or my-mac.local"
@@ -399,6 +402,9 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
               </Text>
             )}
 
+            {/* With a tailnet device picked, its own fields show under it. */}
+            {selectedPeer === null && (
+            <>
             <View style={styles.field}>
             <Text style={styles.label} nativeID="portLabel">
               VNC Port
@@ -477,6 +483,8 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
                 />
                 </View>
               </>
+            )}
+            </>
             )}
           </View>
 
@@ -560,7 +568,16 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
                   peers.map((peer) => (
                     <Pressable
                       key={peer.stableId}
-                      onPress={() => setSelectedPeer(peer)}
+                      onPress={() => {
+                        // Tap again to let go; picking one clears a typed
+                        // address, which would otherwise win.
+                        const picking = selectedPeer?.stableId !== peer.stableId;
+                        setSelectedPeer(picking ? peer : null);
+                        if (picking) {
+                          setHost("");
+                          setHostError(null);
+                        }
+                      }}
                       style={[
                         styles.peer,
                         selectedPeer?.stableId === peer.stableId &&
@@ -582,6 +599,59 @@ export function HomeScreen({ onConnect, onLogin, onSettings }: HomeScreenProps) 
                       </Text>
                     </Pressable>
                   ))
+                )}
+                {selectedPeer && (
+                  <View style={styles.peerConnect}>
+                    <Text style={styles.label} nativeID="peerPassLabel">
+                      Password for {selectedPeer.displayName}
+                    </Text>
+                    <TextInput
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="VNC password"
+                      placeholderTextColor={theme.placeholder}
+                      style={styles.input}
+                      secureTextEntry
+                      accessibilityLabelledBy="peerPassLabel"
+                      returnKeyType="done"
+                      onSubmitEditing={() => void handleConnect()}
+                    />
+                    <Text style={styles.label} nativeID="peerUserLabel">
+                      Mac Username <Text style={styles.optional}>(for macOS Screen Sharing)</Text>
+                    </Text>
+                    <TextInput
+                      value={username}
+                      onChangeText={setUsername}
+                      placeholder="Mac account short name"
+                      placeholderTextColor={theme.placeholder}
+                      style={styles.input}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      accessibilityLabelledBy="peerUserLabel"
+                      returnKeyType="done"
+                      onSubmitEditing={() => void handleConnect()}
+                    />
+                    <Text style={styles.label} nativeID="peerPortLabel">
+                      VNC Port
+                    </Text>
+                    <TextInput
+                      value={port}
+                      onChangeText={(v) => {
+                        setPort(v);
+                        if (portError) setPortError(validatePort(v));
+                      }}
+                      placeholder="5900"
+                      placeholderTextColor={theme.placeholder}
+                      style={[styles.input, portError && styles.inputError]}
+                      keyboardType="numeric"
+                      accessibilityLabelledBy="peerPortLabel"
+                    />
+                    {portError && (
+                      <Text style={styles.fieldError} role="alert">
+                        {portError}
+                      </Text>
+                    )}
+                  </View>
                 )}
               </>
             )}
@@ -830,6 +900,10 @@ function makeStyles(theme: Theme) {
       padding: 14,
       borderRadius: 16,
       backgroundColor: theme.input,
+    },
+    peerConnect: {
+      gap: 8,
+      paddingTop: 4,
     },
     peerActive: {
       borderWidth: 1.5,

@@ -70,6 +70,11 @@ interface ViewerScreenProps {
   /** macOS Screen Sharing (ARD) often needs the Mac account short name. */
   username?: string;
   onClose: () => void;
+  /**
+   * A username typed on the sign-in screen got through to a saved device:
+   * the app saves it to that device so the next connect just works.
+   */
+  onUsernameAccepted?: (deviceId: string, username: string) => void;
 }
 
 /**
@@ -107,7 +112,12 @@ const POST_MESSAGE_SHIM = `
 true;
 `;
 
-export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) {
+export function ViewerScreen({
+  session,
+  username: initialUsername,
+  onClose,
+  onUsernameAccepted,
+}: ViewerScreenProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== "light";
   const theme = isDark ? darkTheme : lightTheme;
@@ -120,6 +130,11 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
   // Password can be re-entered after an auth failure
   const [password, setPassword] = useState(session.password);
   const [authPassword, setAuthPassword] = useState("");
+  // macOS Screen Sharing username, editable on the sign-in screen.
+  const [username, setUsername] = useState(initialUsername ?? "");
+  const [authUsername, setAuthUsername] = useState(initialUsername ?? "");
+  // Set when the sign-in screen changed the username; saved once it connects.
+  const pendingUsernameRef = useRef<string | null>(null);
   // Keyboard panel (extra-keys bar + the phone keyboard) and viewer prefs
   const webViewRef = useRef<WebView | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -258,7 +273,7 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
       buildMobileViewerHtml({
         wsUrl: session.wsUrl,
         password,
-        username,
+        username: username || undefined,
         assetBaseUrl: session.assetBaseUrl,
         pointerMode: pointerModeRef.current,
       }),
@@ -370,6 +385,11 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
           authFailedRef.current = false;
           everConnectedRef.current = true;
           idleBoostedRef.current = false;
+          const acceptedUsername = pendingUsernameRef.current;
+          pendingUsernameRef.current = null;
+          if (acceptedUsername !== null && session.deviceId) {
+            onUsernameAccepted?.(session.deviceId, acceptedUsername);
+          }
           setConnState({ kind: "connected" });
           setZoomLevel(1);
           // Apply saved quality/scale prefs once the viewer is live.
@@ -452,7 +472,7 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
         if (Platform.OS === "android") Vibration.vibrate(12);
       }
     },
-    [clearTimers, scheduleReconnect, session.host],
+    [clearTimers, scheduleReconnect, session.host, session.deviceId, onUsernameAccepted],
   );
 
   // Track the latest connection state for the AppState handler.
@@ -787,11 +807,19 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
   }
 
   function handleAuthRetry(): void {
-    if (!authPassword) return;
+    // A blank password field keeps the one already tried (e.g. only the
+    // Mac username was missing).
+    const nextPassword = authPassword || password;
+    if (!nextPassword) return;
+    const nextUsername = authUsername.trim();
     clearTimers();
     attemptRef.current = 0;
     authFailedRef.current = false;
-    setPassword(authPassword);
+    if (nextUsername !== username) {
+      pendingUsernameRef.current = nextUsername;
+      setUsername(nextUsername);
+    }
+    setPassword(nextPassword);
     // Regenerating the HTML with the new password remounts via key change
     setWebviewKey((k) => k + 1);
     setConnState({ kind: "connecting" });
@@ -857,12 +885,25 @@ export function ViewerScreen({ session, username, onClose }: ViewerScreenProps) 
             <Text style={styles.errorTitle}>Authentication Failed</Text>
             <Text style={styles.errorDetail}>
               The server rejected the credentials. Check the password
-              {username ? ` for “${username}”` : ""} and try again.
+              {username ? ` for “${username}”` : ""} and try again. macOS Screen
+              Sharing also needs your Mac username.
             </Text>
+            <TextInput
+              value={authUsername}
+              onChangeText={setAuthUsername}
+              placeholder="Mac username (macOS only)"
+              placeholderTextColor={theme.muted}
+              style={styles.input}
+              autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="Mac username"
+              accessibilityHint="Optional: your Mac account short name, for macOS Screen Sharing"
+              returnKeyType="next"
+            />
             <TextInput
               value={authPassword}
               onChangeText={setAuthPassword}
-              placeholder="VNC password"
+              placeholder={password ? "Password (blank keeps the last one)" : "VNC password"}
               placeholderTextColor={theme.muted}
               style={styles.input}
               secureTextEntry

@@ -16,6 +16,8 @@ export interface BackendDeviceView {
   vncPort: number;
   label: string;
   collectionName?: string;
+  /** macOS Screen Sharing account short name. */
+  vncUsername?: string;
   hasCredential: boolean;
   createdAt: string;
   updatedAt: string;
@@ -28,6 +30,8 @@ export interface BackendDeviceUpsert {
   lastKnownIp?: string;
   vncPort: number;
   collectionName?: string;
+  /** Sets the macOS username ("" clears it); omit to leave it unchanged. */
+  vncUsername?: string;
 }
 
 export interface BackendShareView {
@@ -49,6 +53,8 @@ export interface BackendSharedDeviceView {
   vncPort: number;
   label: string;
   collectionName?: string;
+  /** macOS Screen Sharing account short name. */
+  vncUsername?: string;
   /** Owner's account email — who granted this. */
   sharedBy: string;
   permission: string;

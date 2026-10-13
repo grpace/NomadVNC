@@ -17,6 +17,7 @@ interface DeviceRow {
   vnc_port: number;
   label: string;
   collection_name: string | null;
+  vnc_username: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,18 +62,20 @@ class FakeDeviceDb implements DbClient {
       return { rows: [...ids].map((device_id) => ({ device_id })) as T[] };
     }
     if (sql.startsWith("INSERT INTO devices")) {
-      const [owner_id, tailscale_stable_id, dns_name, last_known_ip, vnc_port, label, collection_name] = params as [
-        string, string, string | null, string | null, number, string, string | null,
-      ];
+      const [owner_id, tailscale_stable_id, dns_name, last_known_ip, vnc_port, label, collection_name, vnc_username, sets_username] =
+        params as [string, string, string | null, string | null, number, string, string | null, string | null, boolean];
       let device = this.devices.find(
         (d) => d.owner_id === owner_id && d.tailscale_stable_id === tailscale_stable_id && d.vnc_port === vnc_port,
       );
       if (device) {
         Object.assign(device, { dns_name, last_known_ip, label, collection_name, updated_at: NOW });
+        if (sets_username) {
+          device.vnc_username = vnc_username;
+        }
       } else {
         device = {
           id: crypto.randomUUID(), owner_id, tailscale_stable_id, dns_name, last_known_ip,
-          vnc_port, label, collection_name, created_at: NOW, updated_at: NOW,
+          vnc_port, label, collection_name, vnc_username, created_at: NOW, updated_at: NOW,
         };
         this.devices.push(device);
       }
@@ -169,6 +172,29 @@ describe("devices sync", () => {
     const list = await auth(request(app).get("/api/v1/devices"));
     expect(list.body.devices).toHaveLength(1);
     expect(list.body.devices[0].collectionName).toBe("Homelab");
+  });
+
+  it("syncs the macOS username, and only changes it when the field is sent", async () => {
+    const created = await auth(request(app).put("/api/v1/devices")).send({
+      label: "Studio Mac", tailscaleStableId: "peer-mac", vncPort: 5900, vncUsername: " greg ",
+    });
+    expect(created.body.device.vncUsername).toBe("greg");
+
+    // An app that predates the field leaves it alone.
+    const legacy = await auth(request(app).put("/api/v1/devices")).send({
+      label: "Studio", tailscaleStableId: "peer-mac", vncPort: 5900,
+    });
+    expect(legacy.body.device.vncUsername).toBe("greg");
+
+    const cleared = await auth(request(app).put("/api/v1/devices")).send({
+      label: "Studio", tailscaleStableId: "peer-mac", vncPort: 5900, vncUsername: "",
+    });
+    expect(cleared.body.device).not.toHaveProperty("vncUsername");
+
+    const tooLong = await auth(request(app).put("/api/v1/devices")).send({
+      label: "Studio", tailscaleStableId: "peer-mac", vncPort: 5900, vncUsername: "x".repeat(256),
+    });
+    expect(tooLong.status).toBe(400);
   });
 
   it("rejects bad input and strangers", async () => {

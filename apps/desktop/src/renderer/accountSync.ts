@@ -8,8 +8,9 @@
  *   and Sync-now all download + replace. Local storage is the offline cache.
  * - Saves and deletes while signed in go through the server FIRST; a failed
  *   push aborts the local change so the cache can never silently diverge.
- * - The server has no VNC-username field, so downloads preserve local-only
- *   overlays (`vncUsername`, `lastConnectedAt`) matched on stable-id + port.
+ * - The macOS username syncs with the device. Downloads keep a local-only
+ *   username (saved before the server had the field) when the server has
+ *   none, and the local `lastConnectedAt`, matched on stable-id + port.
  * - Sharing management runs behind the tailnet gate (H4d): a *known*
  *   logged-out tailnet refuses with guidance. Unknown state (boot, before
  *   the first tailnet sample) proceeds — absence of evidence is not evidence.
@@ -54,6 +55,8 @@ export function toDeviceUpsert(machine: SavedMachine, collections: Collection[])
     lastKnownIp: machine.lastKnownTailnetIp || undefined,
     vncPort: machine.vncPort,
     collectionName: collectionNameFor(collections, machine.collectionId),
+    // Always sent: "" clears a username removed on this computer.
+    vncUsername: machine.vncUsername ?? "",
   };
 }
 
@@ -70,6 +73,7 @@ export function fromDeviceView(view: BackendDeviceView, collections: Collection[
     dnsName: view.dnsName,
     lastKnownTailnetIp: view.lastKnownIp,
     vncPort: view.vncPort,
+    vncUsername: view.vncUsername,
     credentialMode: view.hasCredential ? "cloudSecure" : "prompt",
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
@@ -95,7 +99,7 @@ export function applyServerLibrary(
     .map((view) => {
       const machine = fromDeviceView(view, collections);
       const overlay = overlays.get(machineMatchKey(machine));
-      if (overlay?.vncUsername) {
+      if (!machine.vncUsername && overlay?.vncUsername) {
         machine.vncUsername = overlay.vncUsername;
       }
       if (overlay?.lastConnectedAt) {

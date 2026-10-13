@@ -9,6 +9,7 @@ const MIGRATIONS: Array<{ version: number; file: string }> = [
   { version: 3, file: "schema-v3.sql" },
   { version: 4, file: "schema-v4.sql" },
   { version: 5, file: "schema-v5.sql" },
+  { version: 6, file: "schema-v6.sql" },
 ];
 
 function loadSql(file: string): string {

@@ -111,6 +111,16 @@ describe("accountSync mapping", () => {
     });
   });
 
+  it("syncs the macOS username, preferring the server's over a local one", () => {
+    expect(toDeviceUpsert(machine({ vncUsername: "greg" }), COLLECTIONS).vncUsername).toBe("greg");
+    expect(toDeviceUpsert(machine(), COLLECTIONS).vncUsername).toBe("");
+    const locals = [machine({ id: "old-id", vncUsername: "local-name" })];
+    expect(applyServerLibrary(locals, [view({ vncUsername: "server-name" })], COLLECTIONS)[0]?.vncUsername).toBe(
+      "server-name",
+    );
+    expect(applyServerLibrary(locals, [view()], COLLECTIONS)[0]?.vncUsername).toBe("local-name");
+  });
+
   it("keys matches on stable id + port", () => {
     expect(machineMatchKey(machine())).toBe("peer-1:5900");
   });

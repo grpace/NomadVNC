@@ -3,6 +3,14 @@
 All notable changes to NomadVNC. Versions follow
 [semantic versioning](https://semver.org/); dates are release dates.
 
+## Unreleased
+
+- On a phone, saved computers can be edited: name, address, port, group, Mac username, and password. A shared computer keeps its address until its shares are removed.
+- The Mac username for macOS Screen Sharing is saved with each computer and syncs through the Nomad account to your other devices, desktop included.
+- On a phone, picking a computer from your tailnet shows its own password, Mac username, and port. Picking one no longer connects to an address left in Manual Connection.
+- When a Mac asks for credentials, the phone's sign-in screen asks for the Mac username too, and saves one that works to that computer.
+- NomadVNC Host works with more VNC viewers, such as RealVNC Viewer. Low or medium picture quality no longer garbles the screen: the host sends 8-bit, 16-bit, and palette color when a viewer asks. Viewers that speak older VNC versions (3.3 and 3.7) can connect, a change of screen resolution resizes the viewer instead of breaking it, and viewers that list many encodings are no longer disconnected.
+
 ## 1.1.0 — 2026-10-10
 
 - Nomad account sign-in no longer expires after a day. A sign-in lasts a year and renews whenever the app is opened, so an app you use stays signed in until you sign out. Self-hosted servers: remove `JWT_EXPIRES_IN` or set it to `365d` if you set it to `24h`.

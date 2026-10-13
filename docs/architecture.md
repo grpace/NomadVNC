@@ -122,7 +122,10 @@ only after a tap on iOS.
 A saved machine records a label, its address, VNC port, optional
 username, group, and how its password is kept (`prompt`, `localSecure`
 = OS keychain on this device, `cloudSecure` = synced through the
-account). Passwords are never part of the machine record.
+account). Passwords are never part of the machine record. The username
+(the Mac account short name macOS Screen Sharing asks for) is not a
+secret: it syncs with the machine, and an app that doesn't send the
+field leaves it unchanged.
 
 Machines are keyed by identity, not IP:
 

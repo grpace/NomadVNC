@@ -4,6 +4,7 @@ vi.mock("../native/NomadNativeModule", () => ({ NomadNativeModule: {} }));
 
 import {
   deviceIdentityForAddress,
+  findAddressConflict,
   sanitizeLocalDevices,
   setLocalCredentialFlag,
   upsertLocalDevice,
@@ -46,5 +47,50 @@ describe("local devices", () => {
     expect(devices).toHaveLength(1);
     expect(devices[0]).not.toHaveProperty("password");
     expect(sanitizeLocalDevices(null)).toEqual([]);
+  });
+
+  it("edits a device in place, keeping its id, password flag, and identity", () => {
+    const tailnet: LocalDevice = {
+      id: "mac-1",
+      label: "Studio",
+      tailscaleStableId: "nStable123",
+      dnsName: "studio.tail1234.ts.net",
+      vncPort: 5900,
+      hasCredential: true,
+    };
+    const renamed = upsertLocalDevice(
+      [tailnet],
+      { id: "mac-1", label: "Studio Mac", host: "studio.tail1234.ts.net", port: 5900, vncUsername: " greg " },
+      nextId,
+    );
+    expect(renamed.devices).toHaveLength(1);
+    expect(renamed.device).toMatchObject({
+      id: "mac-1",
+      label: "Studio Mac",
+      tailscaleStableId: "nStable123",
+      vncUsername: "greg",
+      hasCredential: true,
+    });
+
+    const moved = upsertLocalDevice(renamed.devices, { id: "mac-1", label: "Studio Mac", host: "10.0.0.5", port: 5901 }, nextId);
+    expect(moved.device).toMatchObject({ id: "mac-1", tailscaleStableId: "manual:10.0.0.5", lastKnownIp: "10.0.0.5" });
+    expect(moved.device.vncUsername).toBeUndefined();
+  });
+
+  it("keeps the macOS username through storage", () => {
+    const [device] = sanitizeLocalDevices([
+      { id: "a", label: "Mac", tailscaleStableId: "manual:mac.local", dnsName: "mac.local", vncPort: 5900, vncUsername: "greg" },
+    ]);
+    expect(device?.vncUsername).toBe("greg");
+  });
+
+  it("finds another device already at an address and port", () => {
+    const devices = [
+      { id: "a", label: "A", tailscaleStableId: "manual:10.0.0.1", lastKnownIp: "10.0.0.1", vncPort: 5900, hasCredential: false },
+      { id: "b", label: "B", tailscaleStableId: "manual:10.0.0.2", lastKnownIp: "10.0.0.2", vncPort: 5900, hasCredential: false },
+    ];
+    expect(findAddressConflict(devices, "10.0.0.2", 5900, "a")?.id).toBe("b");
+    expect(findAddressConflict(devices, "10.0.0.2", 5900, "b")).toBeUndefined();
+    expect(findAddressConflict(devices, "10.0.0.2", 5901, "a")).toBeUndefined();
   });
 });

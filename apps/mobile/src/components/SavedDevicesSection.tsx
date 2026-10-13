@@ -8,7 +8,7 @@ import {
   type SavedDeviceLike,
 } from "../account/deviceUi";
 import {
-  deviceIdentityForAddress,
+  findAddressConflict,
   loadLocalDevices,
   newLocalDeviceId,
   saveLocalDevices,
@@ -16,6 +16,7 @@ import {
   upsertLocalDevice,
   type LocalDevice,
 } from "../account/localDevices";
+import { saveAccountDevice } from "../account/deviceEdit";
 import { NomadNativeModule } from "../native/NomadNativeModule";
 import type { PeerDevice } from "@nomadvnc/platform-contracts";
 import { cardElevation, type MobileSession, type Theme } from "../screens/HomeScreen";
@@ -55,15 +56,22 @@ export function SavedDevicesSection({
   const [sectionNotice, setSectionNotice] = useState<string | null>(null);
   const [sharingDevice, setSharingDevice] = useState<SavedDeviceLike | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  /** The saved device being edited (its form shows under its row). */
+  const [editingDevice, setEditingDevice] = useState<
+    (SavedDeviceLike & { hasCredential?: boolean }) | null
+  >(null);
 
-  // Add-device form fields.
+  // Add/edit form fields.
   const [newLabel, setNewLabel] = useState("");
   const [newHost, setNewHost] = useState("");
   const [newPort, setNewPort] = useState("5900");
+  const [newUsername, setNewUsername] = useState("");
+  const [defaultPort, setDefaultPort] = useState("5900");
 
   // Prefill the add-device port from Settings (desktop parity).
   useEffect(() => {
     void loadMobileSettings().then((s) => {
+      setDefaultPort(String(s.defaultVncPort));
       setNewPort((prev) => (prev === "5900" ? String(s.defaultVncPort) : prev));
     });
   }, []);
@@ -137,6 +145,7 @@ export function SavedDevicesSection({
       password,
       assetBaseUrl,
       deviceId: device.id,
+      username: device.vncUsername || undefined,
       host: built.input.host,
       direct: built.input.direct ?? false,
       label: device.label,
@@ -207,7 +216,37 @@ export function SavedDevicesSection({
     }
   }
 
-  async function handleAddDevice(): Promise<void> {
+  function resetForm(): void {
+    setNewLabel("");
+    setNewHost("");
+    setNewPort(defaultPort);
+    setNewCollection("");
+    setNewPassword("");
+    setNewUsername("");
+  }
+
+  function startEdit(device: SavedDeviceLike & { hasCredential?: boolean }): void {
+    setShowAddForm(false);
+    setPendingDeleteId(null);
+    setSectionError(null);
+    setNewLabel(device.label);
+    setNewHost(savedDeviceHost(device));
+    setNewPort(String(device.vncPort));
+    setNewCollection(device.collectionName ?? "");
+    setNewUsername(device.vncUsername ?? "");
+    setNewPassword("");
+    setEditingDevice(device);
+  }
+
+  function closeForm(): void {
+    setShowAddForm(false);
+    setEditingDevice(null);
+    setSectionError(null);
+    resetForm();
+  }
+
+  /** Adds a device, or saves the one being edited. */
+  async function handleSaveDevice(): Promise<void> {
     const label = newLabel.trim();
     const host = newHost.trim();
     const port = Number(newPort.trim());
@@ -223,28 +262,31 @@ export function SavedDevicesSection({
       setSectionError("Port must be 1–65535");
       return;
     }
+    const editing = editingDevice;
+    if (editing) {
+      const others = signedIn ? account.devices : localDevices;
+      if (findAddressConflict(others, host, port, editing.id)) {
+        setSectionError("Another saved computer already uses that address and port.");
+        return;
+      }
+    }
     setSaving(true);
     setSectionError(null);
     try {
       if (signedIn) {
-        const device = await account.client.upsertDevice({
+        await saveAccountDevice(account.client, editing, {
           label,
-          // Same identity rule as desktop: LAN hosts are manual:<host>,
-          // tailnet names stay as-is so they keep routing via the tailnet.
-          tailscaleStableId: deviceIdentityForAddress(host),
-          dnsName: host,
-          lastKnownIp: /^\d+\.\d+\.\d+\.\d+$/.test(host) ? host : undefined,
-          vncPort: port,
-          collectionName: newCollection.trim() || undefined,
+          host,
+          port,
+          collectionName: newCollection,
+          vncUsername: newUsername,
+          password: newPassword,
         });
-        if (newPassword) {
-          await account.client.setDeviceCredential(device.id, newPassword);
-        }
         await account.refreshDevices();
       } else {
         const result = upsertLocalDevice(
           localDevices,
-          { label, host, port, collectionName: newCollection },
+          { id: editing?.id, label, host, port, collectionName: newCollection, vncUsername: newUsername },
           newLocalDeviceId,
         );
         let next = result.devices;
@@ -254,12 +296,9 @@ export function SavedDevicesSection({
         }
         await persistLocal(next);
       }
-      setNewLabel("");
-      setNewHost("");
-      setNewPort("5900");
-      setNewCollection("");
-      setNewPassword("");
+      resetForm();
       setShowAddForm(false);
+      setEditingDevice(null);
     } catch (err) {
       setSectionError(err instanceof Error ? err.message : "Couldn't save the device");
     } finally {
@@ -277,6 +316,105 @@ export function SavedDevicesSection({
 
   const groups = groupDevicesByCollection(signedIn ? account.devices : localDevices);
   const sharedDevices = signedIn ? account.sharedDevices : [];
+
+  const formTitle = editingDevice ? `Edit ${editingDevice.label}` : "Add Device";
+  const keepsPassword = editingDevice?.hasCredential === true;
+  const deviceForm = (
+    <View style={styles.group}>
+      <Text style={styles.groupTitle}>{formTitle}</Text>
+      <Text style={styles.label}>Label</Text>
+      <TextInput
+        value={newLabel}
+        onChangeText={setNewLabel}
+        placeholder="Office PC"
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        accessibilityLabel="Device label"
+      />
+      <Text style={styles.label}>Address (IP, Hostname, or Tailnet Name)</Text>
+      <TextInput
+        value={newHost}
+        onChangeText={setNewHost}
+        placeholder="192.168.1.10 or office-pc.tail1234.ts.net"
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
+        accessibilityLabel="Device host"
+      />
+      <Text style={styles.label}>VNC Port</Text>
+      <TextInput
+        value={newPort}
+        onChangeText={setNewPort}
+        placeholder="5900"
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        keyboardType="numeric"
+        accessibilityLabel="Device VNC port"
+      />
+      <Text style={styles.label}>
+        Collection <Text style={styles.optional}>(optional)</Text>
+      </Text>
+      <TextInput
+        value={newCollection}
+        onChangeText={setNewCollection}
+        placeholder="Work"
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        accessibilityLabel="Device collection, optional"
+      />
+      <Text style={styles.label}>
+        Mac Username <Text style={styles.optional}>(for macOS Screen Sharing)</Text>
+      </Text>
+      <TextInput
+        value={newUsername}
+        onChangeText={setNewUsername}
+        placeholder="Mac account short name"
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
+        accessibilityLabel="Mac username for Screen Sharing, optional"
+      />
+      <Text style={styles.label}>
+        VNC Password{" "}
+        <Text style={styles.optional}>
+          {signedIn ? "(optional, synced encrypted)" : "(optional, saved in this phone's keychain)"}
+        </Text>
+      </Text>
+      <TextInput
+        value={newPassword}
+        onChangeText={setNewPassword}
+        placeholder={keepsPassword ? "Leave blank to keep the saved password" : "VNC password"}
+        placeholderTextColor={theme.placeholder}
+        style={styles.input}
+        secureTextEntry
+        accessibilityLabel="Device VNC password, optional"
+        returnKeyType="done"
+        onSubmitEditing={() => void handleSaveDevice()}
+      />
+      <View style={styles.inlineRow}>
+        <Pressable
+          onPress={() => void handleSaveDevice()}
+          disabled={saving}
+          style={[styles.smallButton, saving && styles.buttonDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel={editingDevice ? "Save changes" : "Save device"}
+        >
+          <Text style={styles.smallButtonLabel}>
+            {saving ? "Saving…" : editingDevice ? "Save Changes" : "Save Device"}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={closeForm}
+          accessibilityRole="button"
+          accessibilityLabel={editingDevice ? "Cancel editing" : "Cancel adding device"}
+        >
+          <Text style={styles.link}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.card}>
@@ -348,6 +486,8 @@ export function SavedDevicesSection({
                 confirmDelete={pendingDeleteId === device.id}
                 onTap={() => void handleTap(device)}
                 onDelete={() => void handleDelete(device.id)}
+                onEdit={() => startEdit(device)}
+                editor={editingDevice?.id === device.id ? deviceForm : null}
                 onShare={
                   signedIn
                     ? () => {
@@ -461,93 +601,15 @@ export function SavedDevicesSection({
         </View>
       )}
 
-      {/* Add device */}
+      {/* Add device (editing shows the same form under the device's row) */}
       {showAddForm ? (
-        <View style={styles.group}>
-          <Text style={styles.groupTitle}>Add Device</Text>
-          <Text style={styles.label}>Label</Text>
-          <TextInput
-            value={newLabel}
-            onChangeText={setNewLabel}
-            placeholder="Office PC"
-            placeholderTextColor={theme.placeholder}
-            style={styles.input}
-            accessibilityLabel="Device label"
-          />
-          <Text style={styles.label}>Address (IP, Hostname, or Tailnet Name)</Text>
-          <TextInput
-            value={newHost}
-            onChangeText={setNewHost}
-            placeholder="192.168.1.10 or office-pc.tail1234.ts.net"
-            placeholderTextColor={theme.placeholder}
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-            accessibilityLabel="Device host"
-          />
-          <Text style={styles.label}>VNC Port</Text>
-          <TextInput
-            value={newPort}
-            onChangeText={setNewPort}
-            placeholder="5900"
-            placeholderTextColor={theme.placeholder}
-            style={styles.input}
-            keyboardType="numeric"
-            accessibilityLabel="Device VNC port"
-          />
-          <Text style={styles.label}>
-            Collection <Text style={styles.optional}>(optional)</Text>
-          </Text>
-          <TextInput
-            value={newCollection}
-            onChangeText={setNewCollection}
-            placeholder="Work"
-            placeholderTextColor={theme.placeholder}
-            style={styles.input}
-            accessibilityLabel="Device collection, optional"
-          />
-          <Text style={styles.label}>
-            VNC Password{" "}
-            <Text style={styles.optional}>
-              {signedIn ? "(optional, synced encrypted)" : "(optional, saved in this phone's keychain)"}
-            </Text>
-          </Text>
-          <TextInput
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="VNC password"
-            placeholderTextColor={theme.placeholder}
-            style={styles.input}
-            secureTextEntry
-            accessibilityLabel="Device VNC password, optional"
-            returnKeyType="done"
-            onSubmitEditing={() => void handleAddDevice()}
-          />
-          <View style={styles.inlineRow}>
-            <Pressable
-              onPress={() => void handleAddDevice()}
-              disabled={saving}
-              style={[styles.smallButton, saving && styles.buttonDisabled]}
-              accessibilityRole="button"
-              accessibilityLabel="Save device"
-            >
-              <Text style={styles.smallButtonLabel}>{saving ? "Saving…" : "Save Device"}</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                setShowAddForm(false);
-                setSectionError(null);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel adding device"
-            >
-              <Text style={styles.link}>Cancel</Text>
-            </Pressable>
-          </View>
-        </View>
+        deviceForm
       ) : (
         <Pressable
-          onPress={() => setShowAddForm(true)}
+          onPress={() => {
+            closeForm();
+            setShowAddForm(true);
+          }}
           style={styles.secondaryButton}
           accessibilityRole="button"
           accessibilityLabel="Add a device"
@@ -581,6 +643,8 @@ function DeviceRow({
   onTap,
   onDelete,
   onShare,
+  onEdit,
+  editor,
   passwordPrompt,
 }: {
   styles: ReturnType<typeof makeStyles>;
@@ -593,6 +657,9 @@ function DeviceRow({
   onTap: () => void;
   onDelete?: () => void;
   onShare?: () => void;
+  onEdit?: () => void;
+  /** The edit form, shown under this row while it is being edited. */
+  editor?: React.ReactNode;
   passwordPrompt: React.ReactNode;
 }) {
   const host = savedDeviceHost(device) || "No Address";
@@ -627,12 +694,23 @@ function DeviceRow({
           </Text>
           <Text style={styles.deviceMeta}>
             {`Port ${device.vncPort}`}
+            {device.vncUsername ? ` · User ${device.vncUsername}` : ""}
             {device.hasCredential ? " · Password saved" : ""}
             {connecting ? " · Connecting…" : ""}
           </Text>
         </View>
-        {(onShare || onDelete) && (
+        {(onShare || onDelete || onEdit) && (
           <View style={styles.deviceActions}>
+            {onEdit && (
+              <Pressable
+                onPress={onEdit}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${device.label}`}
+                hitSlop={8}
+              >
+                <Text style={styles.shareAction}>Edit</Text>
+              </Pressable>
+            )}
             {onShare && (
               <Pressable
                 onPress={onShare}
@@ -661,6 +739,7 @@ function DeviceRow({
         )}
       </Pressable>
       {passwordPrompt}
+      {editor}
     </View>
   );
 }
