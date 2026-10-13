@@ -19,6 +19,13 @@ platforms are attached to one GitHub Release. The `latest*.yml` files are
 what the apps' auto-updater reads, so always publish them with the
 binaries.
 
+Each package job also attaches a copy of every installer without the
+version in its name (`NomadVNC-x64.exe`, `NomadVNC-Host-x64.exe`,
+`NomadVNC.apk`, and so on; see `scripts/copy-latest-names.mjs`). Links of
+the form `https://github.com/grpace/NomadVNC/releases/latest/download/<name>`
+therefore always serve the newest release, and the download page at
+greg.tech/nomadvnc uses them, so it needs no edit per release.
+
 The Go sidecar is cross-compiled per platform and bundled under
 `resources/sidecar/` in each package; it updates with the app.
 
@@ -45,7 +52,8 @@ viewer installer is signed.
    ```
 4. Check the Release page: AppImage, `.deb`, `.rpm`, `.dmg`, `.zip`,
    the viewer `.exe`, `NomadVNC-Host-<version>-x64.exe`,
-   `NomadVNC-<version>.apk`, and the three `latest*.yml` files.
+   `NomadVNC-<version>.apk`, the version-free copy of each of those,
+   and the three `latest*.yml` files.
 
 **Never move or re-create a published tag** — it breaks `git pull` for
 everyone who fetched it and confuses the auto-updater. Fix forward with

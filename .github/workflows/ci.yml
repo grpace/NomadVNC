@@ -93,6 +93,10 @@ jobs:
           path: apps/desktop/build/
           if-no-files-found: error
 
+      # Version-free copies back the site's releases/latest/download links.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        shell: bash
+        run: node scripts/copy-latest-names.mjs apps/desktop/release
       # Publishes to a GitHub Release on version tags or explicit publish dispatch
       - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
@@ -162,6 +166,10 @@ jobs:
             apps/desktop/release/latest-mac.yml
           if-no-files-found: warn
 
+      # Version-free copies back the site's releases/latest/download links.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        shell: bash
+        run: node scripts/copy-latest-names.mjs apps/desktop/release
       - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -226,6 +234,10 @@ jobs:
             apps/desktop/release/latest.yml
           if-no-files-found: warn
 
+      # Version-free copies back the site's releases/latest/download links.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        shell: bash
+        run: node scripts/copy-latest-names.mjs apps/desktop/release
       - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -325,6 +337,10 @@ jobs:
           name: android-apk
           path: apps/mobile/release/*.apk
           if-no-files-found: error
+      # Version-free copies back the site's releases/latest/download links.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+        shell: bash
+        run: node scripts/copy-latest-names.mjs apps/mobile/release
       - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
