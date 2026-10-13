@@ -66,6 +66,14 @@ In NomadVNC, connect to that PC on port **5900** with the password from
 step 3. After a Tailscale sign-in, the PC appears on your tailnet under
 the name from step 3. With another VPN, use the address that VPN assigns.
 
+Other VNC viewers work too, such as RealVNC Viewer on a phone that runs
+the Tailscale app. Connect to the PC's tailnet name or `100.x` address on
+port 5900. If you used **Sign In with Tailscale**, that's the name from
+step 3. If the PC runs the Tailscale app instead, use its name there.
+RealVNC warns that the connection is not encrypted. The VNC connection
+itself isn't, but Tailscale or your VPN encrypts everything between the
+two devices, so it is safe to continue. Any picture-quality setting works.
+
 Setup marks a Public network as Private so other computers on that network
 can connect. It does not open the port on a network Windows still calls
 Public, and it does not forward the port to the internet. While the PC is

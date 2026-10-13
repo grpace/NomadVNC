@@ -2,7 +2,7 @@ package rfb
 
 import "encoding/binary"
 
-// PixelFormat is the 16-byte RFB pixel format, limited to 32-bit true color.
+// PixelFormat is the 16-byte RFB pixel format.
 type PixelFormat struct {
 	BitsPerPixel uint8
 	Depth        uint8
@@ -32,8 +32,23 @@ func DefaultPixelFormat() PixelFormat {
 	}
 }
 
+// supported reports whether the server can encode pixels in f: true
+// color at 8, 16 or 32 bits per pixel, or an 8-bit color map, which the
+// server fills with a fixed palette (see colorMapEntries).
 func (f PixelFormat) supported() bool {
-	return f.BitsPerPixel == 32 && f.TrueColor && f.RedMax > 0 && f.GreenMax > 0 && f.BlueMax > 0
+	if f.BitsPerPixel != 8 && f.BitsPerPixel != 16 && f.BitsPerPixel != 32 {
+		return false
+	}
+	if !f.TrueColor {
+		return f.BitsPerPixel == 8
+	}
+	return channelFits(f.RedMax, f.RedShift, f.BitsPerPixel) &&
+		channelFits(f.GreenMax, f.GreenShift, f.BitsPerPixel) &&
+		channelFits(f.BlueMax, f.BlueShift, f.BitsPerPixel)
+}
+
+func channelFits(max uint16, shift, bits uint8) bool {
+	return max > 0 && uint64(max)<<shift < 1<<bits
 }
 
 // appendWire writes the 16-byte pixel format.
@@ -77,7 +92,7 @@ func appendRawRect(dst []byte, src []byte, width int, rect Rect, format PixelFor
 	dst = binary.BigEndian.AppendUint16(dst, uint16(rect.H))
 	dst = binary.BigEndian.AppendUint32(dst, 0) // raw encoding
 
-	native := !format.BigEndian &&
+	native := format.BitsPerPixel == 32 && format.TrueColor && !format.BigEndian &&
 		format.RedMax == 255 && format.GreenMax == 255 && format.BlueMax == 255 &&
 		format.RedShift == 0 && format.GreenShift == 8 && format.BlueShift == 16
 
@@ -92,16 +107,30 @@ func appendRawRect(dst []byte, src []byte, width int, rect Rect, format PixelFor
 				dst = append(dst, r, g, b, 0)
 				continue
 			}
-			px := (scale(r, format.RedMax) << format.RedShift) |
-				(scale(g, format.GreenMax) << format.GreenShift) |
-				(scale(b, format.BlueMax) << format.BlueShift)
-			var packed [4]byte
-			if format.BigEndian {
-				binary.BigEndian.PutUint32(packed[:], px)
+			var px uint32
+			if format.TrueColor {
+				px = (scale(r, format.RedMax) << format.RedShift) |
+					(scale(g, format.GreenMax) << format.GreenShift) |
+					(scale(b, format.BlueMax) << format.BlueShift)
 			} else {
-				binary.LittleEndian.PutUint32(packed[:], px)
+				px = colorMapIndex(r, g, b)
 			}
-			dst = append(dst, packed[:]...)
+			switch format.BitsPerPixel {
+			case 8:
+				dst = append(dst, byte(px))
+			case 16:
+				if format.BigEndian {
+					dst = binary.BigEndian.AppendUint16(dst, uint16(px))
+				} else {
+					dst = binary.LittleEndian.AppendUint16(dst, uint16(px))
+				}
+			default:
+				if format.BigEndian {
+					dst = binary.BigEndian.AppendUint32(dst, px)
+				} else {
+					dst = binary.LittleEndian.AppendUint32(dst, px)
+				}
+			}
 		}
 	}
 	return dst
@@ -111,5 +140,24 @@ func scale(channel byte, max uint16) uint32 {
 	if max == 255 {
 		return uint32(channel)
 	}
-	return uint32(channel) * uint32(max) / 255
+	return (uint32(channel)*uint32(max) + 127) / 255
+}
+
+// Color-map clients get a fixed 256-color palette: 3 bits red, 3 bits
+// green, 2 bits blue (index bits bbgggrrr).
+func colorMapIndex(r, g, b byte) uint32 {
+	return uint32(r>>5) | uint32(g>>5)<<3 | uint32(b>>6)<<6
+}
+
+// colorMapEntries is the SetColorMapEntries message for the fixed palette.
+func colorMapEntries() []byte {
+	msg := []byte{1, 0}
+	msg = binary.BigEndian.AppendUint16(msg, 0)   // first color
+	msg = binary.BigEndian.AppendUint16(msg, 256) // number of colors
+	for i := 0; i < 256; i++ {
+		msg = binary.BigEndian.AppendUint16(msg, uint16((i&7)*65535/7))
+		msg = binary.BigEndian.AppendUint16(msg, uint16((i>>3&7)*65535/7))
+		msg = binary.BigEndian.AppendUint16(msg, uint16((i>>6&3)*65535/3))
+	}
+	return msg
 }
