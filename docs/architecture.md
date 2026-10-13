@@ -155,10 +155,15 @@ register that address and sign in from it, including when the app is
 already open. The email also includes that address for paste. The response is identical whether or not the address
 has an account. The app redeems it with
 `POST /api/v1/auth/consume {token}` (atomic, single use) for a session JWT
-(HS256, 365 days by default). `POST /api/v1/auth/refresh` (signed in)
-returns a fresh token; the apps call it once a token is 12 hours old or
-halfway to expiry, so a used app stays signed in. `POST /api/v1/auth/logout`
-bumps the user's credential version, signing out every session at once. Tokens are kept in the OS keychain.
+(HS256, 365 days by default). Each sign-in starts a row in `sessions`
+(migration 7), and the token carries its id as `sid`.
+`POST /api/v1/auth/refresh` (signed in) returns a fresh token for the same
+session; the apps call it once a token is 12 hours old or halfway to
+expiry, so a used app stays signed in. A token from before sessions
+existed gets one on its first refresh. `POST /api/v1/auth/logout` revokes
+only the caller's session, so the user's other devices stay signed in.
+`POST /api/v1/auth/logout-all` bumps the user's credential version,
+signing out every device at once. Tokens are kept in the OS keychain.
 
 ### API
 

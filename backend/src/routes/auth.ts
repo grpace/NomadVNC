@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { BackendConfig } from "../config.js";
 import type { DbClient } from "../db.js";
 import { asyncRoute } from "../http.js";
-import { createRequireAuth, signToken } from "../jwt.js";
+import { createRequireAuth, createSession, signToken, type TokenPayload } from "../jwt.js";
 import { sendMagicLinkEmail, type Mailer } from "../mailer.js";
 import { createRateLimiter } from "../rateLimit.js";
 import {
@@ -101,23 +101,50 @@ export function createAuthRouter(deps: AuthDeps): Router {
       res.status(401).json({ error: "Invalid or expired link" });
       return;
     }
-    res.json({ token: signToken(config, user) });
+    res.json({ token: signToken(config, user, await createSession(db, user.id)) });
   }));
 
   // Sliding session: a signed-in app trades its still-valid token for a
   // fresh one, so it stays signed in as long as it is opened now and then.
-  // Logout and account deletion still revoke every token (credential_version).
+  // The device keeps its session; a token from before sessions existed
+  // gets one here, so signing out later affects only that device.
   router.post("/refresh", createRequireAuth(config, db), asyncRoute(async (req: Request, res: Response) => {
-    const user = (req as Request & { user?: { sub: string; email: string; cv: number } }).user;
+    const user = (req as Request & { user?: TokenPayload }).user;
     if (!user) {
       res.status(401).json({ error: "Authentication required" });
       return;
     }
-    res.json({ token: signToken(config, { id: user.sub, email: user.email, credential_version: user.cv }) });
+    let sessionId = user.sid;
+    if (sessionId) {
+      await db.query("UPDATE sessions SET last_used_at = now() WHERE id = $1", [sessionId]);
+    } else {
+      sessionId = await createSession(db, user.sub);
+    }
+    res.json({
+      token: signToken(config, { id: user.sub, email: user.email, credential_version: user.cv }, sessionId),
+    });
   }));
 
+  // Signs out this device only. A token from before sessions existed has
+  // no session to revoke: the app deletes it, and it stays valid until it
+  // expires. Apps renew into a session within 12 hours of being opened, so
+  // that only covers tokens not renewed since this change.
   router.post("/logout", createRequireAuth(config, db), asyncRoute(async (req: Request, res: Response) => {
-    const user = (req as Request & { user?: { sub: string } }).user;
+    const user = (req as Request & { user?: TokenPayload }).user;
+    if (!user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    if (user.sid) {
+      await db.query("UPDATE sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2", [user.sid, user.sub]);
+    }
+    res.json(GENERIC_OK);
+  }));
+
+  // Signs out every device, e.g. after losing a phone. Bumping the
+  // credential version ends every token, with or without a session.
+  router.post("/logout-all", createRequireAuth(config, db), asyncRoute(async (req: Request, res: Response) => {
+    const user = (req as Request & { user?: TokenPayload }).user;
     if (!user) {
       res.status(401).json({ error: "Authentication required" });
       return;
@@ -125,6 +152,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
     await db.query("UPDATE users SET credential_version = credential_version + 1, updated_at = now() WHERE id = $1", [
       user.sub,
     ]);
+    await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [user.sub]);
     res.json(GENERIC_OK);
   }));
 

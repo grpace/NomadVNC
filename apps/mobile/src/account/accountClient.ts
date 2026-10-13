@@ -128,8 +128,14 @@ export class AccountClient {
     return body.token;
   }
 
+  /** Ends this device's session. Other signed-in devices are unaffected. */
   async logout(): Promise<void> {
     await this.request("/api/v1/auth/logout", { method: "POST" });
+  }
+
+  /** Ends every session on the account, this device's included. */
+  async logoutAll(): Promise<void> {
+    await this.request("/api/v1/auth/logout-all", { method: "POST" });
   }
 
   /**

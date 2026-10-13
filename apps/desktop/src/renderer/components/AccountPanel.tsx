@@ -15,6 +15,7 @@ interface AccountPanelProps {
   onRequestLink: (email: string) => Promise<void>;
   onConsumeLink: (token: string) => Promise<void>;
   onSignOut: () => Promise<void>;
+  onSignOutAll: () => Promise<void>;
   /** Permanently deletes the account on the server. */
   onDeleteAccount: () => Promise<void>;
   onSyncNow: () => Promise<void>;
@@ -31,6 +32,7 @@ export function AccountPanel({
   onRequestLink,
   onConsumeLink,
   onSignOut,
+  onSignOutAll,
   onDeleteAccount,
   onSyncNow,
   onNotice,
@@ -38,11 +40,14 @@ export function AccountPanel({
   const [serverDraft, setServerDraft] = useState(baseUrl);
   const [email, setEmail] = useState("");
   const [linkInput, setLinkInput] = useState("");
-  const [busy, setBusy] = useState<"idle" | "request" | "consume" | "signout" | "sync" | "delete">("idle");
+  const [busy, setBusy] = useState<"idle" | "request" | "consume" | "signout" | "signoutall" | "sync" | "delete">(
+    "idle",
+  );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingSignOutAll, setConfirmingSignOutAll] = useState(false);
 
   async function run(
-    kind: "request" | "consume" | "signout" | "sync" | "delete",
+    kind: "request" | "consume" | "signout" | "signoutall" | "sync" | "delete",
     task: () => Promise<void>,
   ): Promise<void> {
     setBusy(kind);
@@ -158,7 +163,47 @@ export function AccountPanel({
               {busy === "signout" ? "Signing Out…" : "Sign Out of Nomad Account"}
             </button>
           </div>
+          <p className="form-hint">Signs out this computer only. Your other devices stay signed in.</p>
         </div>
+
+        <details className="account-advanced" onToggle={() => setConfirmingSignOutAll(false)}>
+          <summary className="account-advanced__summary">Sign Out of All Devices</summary>
+          <div className="account-advanced__content">
+            <p className="form-hint">
+              Every phone and computer signed in to {session.email} will need to sign in again, this one
+              included. Use this if you lost a device.
+            </p>
+            {confirmingSignOutAll ? (
+              <div className="btn-stack">
+                <button
+                  type="button"
+                  className="btn btn--danger btn--full"
+                  disabled={busy !== "idle"}
+                  onClick={() => void run("signoutall", onSignOutAll)}
+                >
+                  {busy === "signoutall" ? "Signing Out…" : "Sign Out Everywhere"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--full"
+                  disabled={busy !== "idle"}
+                  onClick={() => setConfirmingSignOutAll(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn--secondary btn--full"
+                disabled={busy !== "idle"}
+                onClick={() => setConfirmingSignOutAll(true)}
+              >
+                Sign Out of All Devices…
+              </button>
+            )}
+          </div>
+        </details>
 
         <details className="account-advanced" onToggle={() => setConfirmingDelete(false)}>
           <summary className="account-advanced__summary">Delete Account</summary>

@@ -170,6 +170,20 @@ export class AccountStateManager {
   }
 
   /**
+   * Signs out every device on the account, then this one locally. Unlike
+   * logout, the server must confirm: otherwise the other devices would
+   * stay signed in while this one looked signed out. Throws on failure.
+   */
+  async logoutAll(): Promise<void> {
+    await this.client.logoutAll();
+    await clearSession(this.store);
+    this.session = null;
+    this.devices = [];
+    this.sharedDevices = [];
+    this.emit();
+  }
+
+  /**
    * Permanently deletes the account on the server, then signs out locally.
    * Throws (leaving everything as it was) if the server doesn't confirm.
    */

@@ -46,6 +46,7 @@ interface FakeClientOptions {
   consume?: (token: string) => Promise<string>;
   failDevices?: Error;
   failDelete?: Error;
+  failLogoutAll?: Error;
   refresh?: () => Promise<string>;
 }
 
@@ -63,6 +64,10 @@ function fakeClient(options: FakeClientOptions = {}) {
     },
     async logout() {
       calls.push("logout");
+    },
+    async logoutAll() {
+      calls.push("logoutAll");
+      if (options.failLogoutAll) throw options.failLogoutAll;
     },
     async refreshSession() {
       calls.push("refreshSession");
@@ -199,6 +204,29 @@ describe("AccountStateManager.logout", () => {
     expect(manager.devices).toEqual([]);
     expect(manager.sharedDevices).toEqual([]);
     expect(await store.get("nomadvnc.account.session.v1")).toBeNull();
+  });
+});
+
+describe("AccountStateManager.logoutAll", () => {
+  it("signs out every device on the server, then this one", async () => {
+    const store = memoryStore();
+    const { manager, calls } = makeManager(store);
+    await manager.init();
+    await manager.completeLogin("https://api.example.test/verify?token=magic_123");
+    await manager.logoutAll();
+    expect(calls).toContain("logoutAll");
+    expect(manager.session).toBeNull();
+    expect(await store.get("nomadvnc.account.session.v1")).toBeNull();
+  });
+
+  it("stays signed in when the server can't confirm", async () => {
+    const store = memoryStore();
+    const { manager } = makeManager(store, { failLogoutAll: new Error("offline") });
+    await manager.init();
+    await manager.completeLogin("https://api.example.test/verify?token=magic_123");
+    await expect(manager.logoutAll()).rejects.toThrow("offline");
+    expect(manager.session).not.toBeNull();
+    expect(await store.get("nomadvnc.account.session.v1")).not.toBeNull();
   });
 });
 

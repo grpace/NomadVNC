@@ -366,6 +366,18 @@ export function App() {
       // Server logout is best-effort (offline counts too); the local
       // token is always discarded below.
     }
+    await forgetAccountSession();
+    setStatus({ message: "Signed out of Nomad account", variant: "info" });
+  }
+
+  /** Signs out every device. Errors propagate: the server must confirm. */
+  async function handleAccountSignOutAll(): Promise<void> {
+    await accountClient.logoutAll();
+    await forgetAccountSession();
+    setStatus({ message: "Signed out of Nomad account on all devices", variant: "info" });
+  }
+
+  async function forgetAccountSession(): Promise<void> {
     try {
       await window.nomadNative.deleteAccountToken?.();
     } catch {
@@ -378,7 +390,6 @@ export function App() {
     persistSyncState({ uploadedForEmail: null, lastAccountEmail: loadSyncState().lastAccountEmail });
     setSharedDevices([]);
     setSharingMachine(null);
-    setStatus({ message: "Signed out of Nomad account", variant: "info" });
   }
 
   /** Deletes the account on the server; machines on this computer stay. */
@@ -2040,6 +2051,7 @@ export function App() {
       onRequestLink={handleRequestMagicLink}
       onConsumeLink={handleConsumeMagicLink}
       onSignOut={handleAccountSignOut}
+      onSignOutAll={handleAccountSignOutAll}
       onDeleteAccount={handleAccountDelete}
       onSyncNow={handleSyncNow}
       onNotice={(message, variant) => setStatus({ message, variant })}

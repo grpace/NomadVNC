@@ -5,6 +5,9 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+- Signing out of a Nomad account signs out only that device. Your other phones and computers stay signed in. **Sign Out of All Devices** (phone: Settings → Account; desktop: Account) signs out everywhere, for example after losing a phone.
+- On iPhone and Android, connecting to a Mac that asks for its username and password no longer stalls and retries. The viewer couldn't run the encryption that Apple's sign-in needs; it now loads from a secure local address. A sign-in step that fails ends the attempt at once instead of after 20 seconds.
+
 ## 1.1.1 — 2026-10-13
 
 - On a phone, saved computers can be edited: name, address, port, group, Mac username, and password. A shared computer keeps its address until its shares are removed.

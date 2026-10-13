@@ -30,6 +30,7 @@ export interface AccountContextValue {
   requestMagicLink: (email: string) => Promise<void>;
   completeLogin: (rawInput: string) => Promise<void>;
   logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   refreshDevices: () => Promise<void>;
   saveConfig: (baseUrl: string) => Promise<void>;
@@ -77,6 +78,7 @@ export function AccountProvider({
       requestMagicLink: (email: string) => manager.requestMagicLink(email),
       completeLogin: (rawInput: string) => manager.completeLogin(rawInput),
       logout: () => manager.logout(),
+      logoutAll: () => manager.logoutAll(),
       deleteAccount: () => manager.deleteAccount(),
       refreshDevices: () => manager.refreshDevices(),
       saveConfig: (baseUrl: string) => manager.saveConfig(baseUrl),

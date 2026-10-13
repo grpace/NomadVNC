@@ -57,8 +57,9 @@ updates then.
 ### Home
 
 When you're signed in, the home screen leads with your computers. Tap
-one to connect. Sign out stays on that card. The account server address
-and deleting the account are in **Settings → Account**. A typed address
+one to connect. Sign out stays on that card; it signs out this phone
+only. The account server address, **Sign Out of All Devices** (for a
+lost phone), and deleting the account are in **Settings → Account**. A typed address
 or a computer picked from your tailnet brings up **Connect** at the
 bottom of the screen. Picking a tailnet computer shows its own password,
 **Mac Username**, and port fields; typing an address deselects it.

@@ -29,6 +29,7 @@ class FakeDb implements DbClient {
   users: UserRow[] = [];
   links: LinkRow[] = [];
   shares: Array<{ grantee_email: string; created_by: string }> = [];
+  sessions: Array<{ id: string; user_id: string; revoked: boolean }> = [];
   private counter = 1;
 
   async query<T>(text: string, params: unknown[] = []): Promise<{ rows: T[] }> {
@@ -97,7 +98,35 @@ class FakeDb implements DbClient {
       this.users = this.users.filter((u) => u !== user);
       this.links = this.links.filter((l) => l.user_id !== user.id);
       this.shares = this.shares.filter((share) => share.created_by !== user.id);
+      this.sessions = this.sessions.filter((x) => x.user_id !== user.id);
       return { rows: [{ id: user.id }] as T[] };
+    }
+    if (sql.startsWith("INSERT INTO sessions")) {
+      const session = { id: `session-${this.counter++}`, user_id: params[0] as string, revoked: false };
+      this.sessions.push(session);
+      return { rows: [{ id: session.id }] as T[] };
+    }
+    if (sql.startsWith("SELECT id FROM sessions WHERE id")) {
+      return {
+        rows: this.sessions
+          .filter((x) => x.id === params[0] && x.user_id === params[1] && !x.revoked)
+          .map((x) => ({ id: x.id })) as T[],
+      };
+    }
+    if (sql.startsWith("UPDATE sessions SET last_used_at")) {
+      return { rows: [] as T[] };
+    }
+    if (sql.startsWith("UPDATE sessions SET revoked_at = now() WHERE id")) {
+      for (const x of this.sessions) {
+        if (x.id === params[0] && x.user_id === params[1]) x.revoked = true;
+      }
+      return { rows: [] as T[] };
+    }
+    if (sql.startsWith("UPDATE sessions SET revoked_at = now() WHERE user_id")) {
+      for (const x of this.sessions) {
+        if (x.user_id === params[0]) x.revoked = true;
+      }
+      return { rows: [] as T[] };
     }
     if (sql.startsWith("UPDATE users SET credential_version")) {
       const user = this.users.find((u) => u.id === params[0]);
@@ -231,57 +260,104 @@ describe("backend auth", () => {
     expect(expired.status).toBe(401);
   });
 
-  it("logs out by bumping the credential version", async () => {
-    await request(app).post("/api/v1/auth/magic-link").send({ email: "carol@example.test" });
-    const user = db.users[0];
+  /** Signs in through a fresh magic link, as a new device would. */
+  async function signIn(email: string): Promise<string> {
+    await request(app).post("/api/v1/auth/magic-link").send({ email });
+    const user = db.users.find((u) => u.email === email);
     if (!user) {
       throw new Error("expected a user");
     }
-    const token = signToken(config, user);
+    const raw = generateOpaqueToken();
+    db.links.push({
+      id: `link-${raw}`,
+      user_id: user.id,
+      token_hash: hashOpaqueToken(raw),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      consumed_at: null,
+    });
+    const res = await request(app).post("/api/v1/auth/consume").send({ token: raw });
+    expect(res.status).toBe(200);
+    return res.body.token as string;
+  }
 
-    const authed = await request(app)
-      .post("/api/v1/auth/logout")
-      .set("Authorization", `Bearer ${token}`);
-    expect(authed.status).toBe(200);
+  const refresh = (token: string) =>
+    request(app).post("/api/v1/auth/refresh").set("Authorization", `Bearer ${token}`);
 
-    // Old token is now dead.
-    const retry = await request(app)
-      .post("/api/v1/auth/logout")
-      .set("Authorization", `Bearer ${token}`);
-    expect(retry.status).toBe(401);
+  it("signs out only the device that asks", async () => {
+    const phone = await signIn("carol@example.test");
+    const laptop = await signIn("carol@example.test");
+    expect((jwt.decode(phone) as { sid?: string }).sid).toBeTruthy();
+
+    const out = await request(app).post("/api/v1/auth/logout").set("Authorization", `Bearer ${phone}`);
+    expect(out.status).toBe(200);
+
+    expect((await refresh(phone)).status).toBe(401);
+    expect((await refresh(laptop)).status).toBe(200);
 
     const anon = await request(app).post("/api/v1/auth/logout");
     expect(anon.status).toBe(401);
   });
 
-  it("refreshes a live session and keeps revocation working", async () => {
-    await request(app).post("/api/v1/auth/magic-link").send({ email: "dana@example.test" });
+  it("signs out every device with logout-all", async () => {
+    const phone = await signIn("erin@example.test");
+    const laptop = await signIn("erin@example.test");
     const user = db.users[0];
     if (!user) {
       throw new Error("expected a user");
     }
-    const token = signToken(config, user);
+    const legacy = signToken(config, user);
 
-    const refreshed = await request(app)
-      .post("/api/v1/auth/refresh")
-      .set("Authorization", `Bearer ${token}`);
+    const out = await request(app).post("/api/v1/auth/logout-all").set("Authorization", `Bearer ${laptop}`);
+    expect(out.status).toBe(200);
+
+    expect((await refresh(phone)).status).toBe(401);
+    expect((await refresh(laptop)).status).toBe(401);
+    expect((await refresh(legacy)).status).toBe(401);
+  });
+
+  it("refreshes a live session and keeps revocation working", async () => {
+    const token = await signIn("dana@example.test");
+    const user = db.users[0];
+    if (!user) {
+      throw new Error("expected a user");
+    }
+    const sid = (jwt.decode(token) as { sid: string }).sid;
+
+    const refreshed = await refresh(token);
     expect(refreshed.status).toBe(200);
-    const next = jwt.decode(refreshed.body.token) as { sub: string; email: string; cv: number };
-    expect(next).toMatchObject({ sub: user.id, email: "dana@example.test", cv: user.credential_version });
+    const next = jwt.decode(refreshed.body.token) as { sub: string; email: string; cv: number; sid: string };
+    expect(next).toMatchObject({ sub: user.id, email: "dana@example.test", cv: user.credential_version, sid });
 
     await request(app).post("/api/v1/auth/logout").set("Authorization", `Bearer ${refreshed.body.token}`);
-    const afterLogout = await request(app)
-      .post("/api/v1/auth/refresh")
-      .set("Authorization", `Bearer ${refreshed.body.token}`);
-    expect(afterLogout.status).toBe(401);
+    expect((await refresh(refreshed.body.token)).status).toBe(401);
+    // The pre-refresh token shares the session, so it ends too.
+    expect((await refresh(token)).status).toBe(401);
 
     const expired = jwt.sign({ sub: user.id, email: user.email, cv: user.credential_version }, config.jwtSecret, {
       algorithm: "HS256",
       expiresIn: -10,
     });
-    const late = await request(app).post("/api/v1/auth/refresh").set("Authorization", `Bearer ${expired}`);
+    const late = await refresh(expired);
     expect(late.status).toBe(401);
     expect(late.body.error).toBe("Token expired");
+  });
+
+  it("gives a token from before sessions its own session on refresh", async () => {
+    const other = await signIn("frank@example.test");
+    const user = db.users[0];
+    if (!user) {
+      throw new Error("expected a user");
+    }
+    const legacy = signToken(config, user);
+
+    const upgraded = await refresh(legacy);
+    expect(upgraded.status).toBe(200);
+    expect((jwt.decode(upgraded.body.token) as { sid?: string }).sid).toBeTruthy();
+
+    // Signing out the upgraded device leaves the other one alone.
+    await request(app).post("/api/v1/auth/logout").set("Authorization", `Bearer ${upgraded.body.token}`);
+    expect((await refresh(upgraded.body.token)).status).toBe(401);
+    expect((await refresh(other)).status).toBe(200);
   });
 
   it("redeems a link exactly once even when consumes race", async () => {

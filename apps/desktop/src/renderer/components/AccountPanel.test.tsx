@@ -30,6 +30,7 @@ function renderPanel(overrides: Partial<Parameters<typeof AccountPanel>[0]> = {}
     onRequestLink: vi.fn(async () => {}),
     onConsumeLink: vi.fn(async () => {}),
     onSignOut: vi.fn(async () => {}),
+    onSignOutAll: vi.fn(async () => {}),
     onDeleteAccount: vi.fn(async () => {}),
     onSyncNow: vi.fn(async () => {}),
     onNotice: spy.onNotice,
@@ -218,6 +219,33 @@ describe("account deletion", () => {
     });
     click(buttonByLabel("Delete Account…"));
     click(buttonByLabel("Permanently Delete me@example.test"));
+    await flush();
+    expect(spy.calls).toContainEqual({ message: "Server unreachable", variant: "error" });
+  });
+});
+
+describe("sign out of all devices", () => {
+  const session = { token: "jwt", email: "me@example.test" };
+
+  it("asks for confirmation before signing out everywhere", async () => {
+    const { props } = renderPanel({ session });
+    click(buttonByLabel("Sign Out of All Devices…"));
+    expect(props.onSignOutAll).not.toHaveBeenCalled();
+    click(buttonByLabel("Sign Out Everywhere"));
+    await flush();
+    expect(props.onSignOutAll).toHaveBeenCalledTimes(1);
+    expect(props.onSignOut).not.toHaveBeenCalled();
+  });
+
+  it("reports a failure instead of pretending it worked", async () => {
+    const { spy } = renderPanel({
+      session,
+      onSignOutAll: vi.fn(async () => {
+        throw new Error("Server unreachable");
+      }),
+    });
+    click(buttonByLabel("Sign Out of All Devices…"));
+    click(buttonByLabel("Sign Out Everywhere"));
     await flush();
     expect(spy.calls).toContainEqual({ message: "Server unreachable", variant: "error" });
   });

@@ -9,18 +9,24 @@ export interface SessionUser {
   credential_version: number;
 }
 
-interface TokenPayload {
+export interface TokenPayload {
   sub: string;
   email: string;
   cv: number;
+  /** Session id: the signed-in device. Tokens from before v7 have none. */
+  sid?: string;
   iat: number;
   exp: number;
 }
 
-export function signToken(config: BackendConfig, user: { id: string; email: string; credential_version?: number }): string {
+export function signToken(
+  config: BackendConfig,
+  user: { id: string; email: string; credential_version?: number },
+  sessionId?: string,
+): string {
   const cv = Number(user.credential_version ?? 1);
   return jwt.sign(
-    { sub: user.id, email: user.email, cv: Number.isFinite(cv) ? cv : 1 },
+    { sub: user.id, email: user.email, cv: Number.isFinite(cv) ? cv : 1, ...(sessionId ? { sid: sessionId } : {}) },
     config.jwtSecret,
     { algorithm: "HS256", expiresIn: config.jwtExpiresIn } as jwt.SignOptions,
   );
@@ -46,6 +52,16 @@ export function createRequireAuth(config: BackendConfig, db: DbClient) {
         res.status(401).json({ error: "Authentication required" });
         return;
       }
+      if (payload.sid) {
+        const session = await db.query<{ id: string }>(
+          "SELECT id FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+          [payload.sid, payload.sub],
+        );
+        if (!session.rows[0]) {
+          res.status(401).json({ error: "Authentication required" });
+          return;
+        }
+      }
       (req as Request & { user?: TokenPayload }).user = payload;
       next();
     } catch (error) {
@@ -56,4 +72,10 @@ export function createRequireAuth(config: BackendConfig, db: DbClient) {
       res.status(401).json({ error: "Invalid token" });
     }
   };
+}
+
+/** Starts a session for a newly signed-in device and returns its id. */
+export async function createSession(db: DbClient, userId: string): Promise<string> {
+  const result = await db.query<{ id: string }>("INSERT INTO sessions (user_id) VALUES ($1) RETURNING id", [userId]);
+  return (result.rows[0] as { id: string }).id;
 }

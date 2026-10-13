@@ -149,6 +149,29 @@ export function SettingsScreen({ theme, onBack }: SettingsScreenProps) {
     }
   }
 
+  function confirmLogoutAll(): void {
+    Alert.alert(
+      "Sign Out of All Devices?",
+      `Every phone and computer signed in to ${account.email ?? "your account"} will need to sign in again, this one included. Use this if you lost a device.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out All",
+          style: "destructive",
+          onPress: () => {
+            account.logoutAll().catch((err: unknown) => {
+              setServerUrlError(
+                err instanceof Error
+                  ? `Couldn't sign out other devices: ${err.message}`
+                  : "Couldn't sign out other devices.",
+              );
+            });
+          },
+        },
+      ],
+    );
+  }
+
   function confirmDeleteAccount(): void {
     Alert.alert(
       "Delete Your Nomad Account?",
@@ -252,6 +275,15 @@ export function SettingsScreen({ theme, onBack }: SettingsScreenProps) {
               accessibilityLabel="Sign out"
             >
               <Text style={styles.back}>Sign Out</Text>
+            </Pressable>
+            <Text style={styles.hint}>Signs out this phone only. Your other devices stay signed in.</Text>
+            <Pressable
+              onPress={confirmLogoutAll}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out of all devices"
+              hitSlop={8}
+            >
+              <Text style={styles.back}>Sign Out of All Devices…</Text>
             </Pressable>
             <View style={styles.deleteAccountBlock}>
               <Text style={styles.hint}>
