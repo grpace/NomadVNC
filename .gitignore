@@ -44,6 +44,8 @@ apps/mobile/android/app/libs/
 
 # Go
 go-core/bin/
+# Windows resources for the host exe, written by scripts/build-host.mjs
+go-core/cmd/nomadvnc-host/*.syso
 go-core/.gomobile/
 go-core/vendor/
 

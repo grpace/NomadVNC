@@ -117,10 +117,6 @@ func captureGDI() (rfb.Frame, error) {
 	return rfb.Frame{Width: width, Height: height, Pix: pix}, nil
 }
 
-func visibleWindowCount() int {
-	return len(visibleWindows())
-}
-
 func visibleWindows() []uintptr {
 	var hwnds []uintptr
 	cb := windows.NewCallback(func(hwnd, _ uintptr) uintptr {

@@ -2,6 +2,7 @@ package hostnet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -89,23 +90,21 @@ func newServer(dir, hostname string) *tsnet.Server {
 	return server
 }
 
-// SignIn starts the node and waits until it is logged in. open is called
-// once with the browser approval URL, and again with the Tailscale
-// machines page when key expiry is still on. status receives progress
-// text. ctx bounds the wait for browser approval. After login, key
-// expiry is watched on watch until it is off or watch is cancelled. A
-// nil watch uses ctx. Cancelling that watch does not undo a finished
-// login: the status stays on the key-expiry step, and the saved node
-// still comes back at boot. Calling SignIn is the only path that may
-// contact Tailscale before a saved identity exists.
-func SignIn(ctx context.Context, dir, hostname string, open func(url string), status func(string), watch context.Context) error {
+// SignIn starts the node, waits until it is logged in, and returns the
+// node key's expiry (zero when expiry is off). open is called with the
+// browser approval URL; status receives progress text. ctx bounds the wait
+// for browser approval. The node is closed on return, so the service can
+// take over the saved identity at once: two nodes must never run from one
+// state directory. Calling SignIn is the only path that may contact
+// Tailscale before a saved identity exists.
+func SignIn(ctx context.Context, dir, hostname string, open func(url string), status func(string)) (time.Time, error) {
 	already := HasIdentity(dir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return time.Time{}, err
 	}
 	server := newServer(dir, hostname)
 	if err := server.Start(); err != nil {
-		return err
+		return time.Time{}, err
 	}
 	defer func() {
 		server.Close()
@@ -116,7 +115,7 @@ func SignIn(ctx context.Context, dir, hostname string, open func(url string), st
 
 	localClient, err := server.LocalClient()
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 
 	deadline := time.Now().Add(3 * time.Minute)
@@ -124,25 +123,22 @@ func SignIn(ctx context.Context, dir, hostname string, open func(url string), st
 	asked := false
 	for {
 		if time.Now().After(deadline) {
-			return errors.New("timed out waiting for Tailscale sign-in")
+			return time.Time{}, errors.New("timed out waiting for Tailscale sign-in")
 		}
 		st, err := localClient.Status(ctx)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		if st.BackendState == "Running" {
-			if err := os.WriteFile(filepath.Join(dir, signedInMarker), []byte("ok\n"), 0o644); err != nil {
-				return err
+			if err := os.WriteFile(filepath.Join(dir, signedInMarker), []byte("ok\n"), 0o600); err != nil {
+				return time.Time{}, err
 			}
-			if watch == nil {
-				watch = ctx
-			}
-			waitForKeyExpiry(watch, localClient, open, status)
-			return nil
+			report(status, "Signed in to Tailscale.")
+			return readKeyExpiry(ctx, localClient)
 		}
 		if server.AuthKey == "" && !asked && (st.BackendState == "NeedsLogin" || st.BackendState == "NoState") {
 			if err := localClient.StartLoginInteractive(ctx); err != nil && !strings.Contains(err.Error(), "already") {
-				return err
+				return time.Time{}, err
 			}
 			asked = true
 		}
@@ -152,7 +148,7 @@ func SignIn(ctx context.Context, dir, hostname string, open func(url string), st
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return time.Time{}, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -172,27 +168,20 @@ func keyExpiryPendingStatus(expiry time.Time) string {
 	return "Signed in. Tailscale setup is not finished until key expiry is off. On the Machines page, open this PC and choose Disable Key Expiry. Sign in there with the account that owns the tailnet. Until you do, this PC drops off on " + when + "."
 }
 
-// waitForKeyExpiry stays on the admin step until key expiry is off.
-// A node cannot turn that off for itself. Only the tailnet owner can,
-// and setup does not call Tailscale finished before that. Cancelling
-// ctx leaves the pending status in place.
-func waitForKeyExpiry(ctx context.Context, lc *local.Client, open func(string), status func(string)) {
-	opened := false
-	announce := func(expiry time.Time) bool {
-		if expiry.IsZero() {
-			report(status, keyExpiryOffStatus())
-			return true
-		}
-		if !opened && open != nil {
-			open(tailscaleMachinesURL)
-			opened = true
-		}
-		report(status, keyExpiryPendingStatus(expiry))
-		return false
-	}
-	if expiry, err := readKeyExpiry(ctx, lc); err == nil && announce(expiry) {
+// WaitForKeyExpiryOff stays on the admin step until key expiry is off, as
+// reported by the running service in the status file. A node cannot turn
+// expiry off for itself; only the tailnet owner can, and setup does not
+// call Tailscale finished before that. Cancelling ctx leaves the pending
+// status in place.
+func WaitForKeyExpiryOff(ctx context.Context, dir string, expiry time.Time, open func(string), status func(string)) {
+	if expiry.IsZero() {
+		report(status, keyExpiryOffStatus())
 		return
 	}
+	if open != nil {
+		open(tailscaleMachinesURL)
+	}
+	report(status, keyExpiryPendingStatus(expiry))
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -200,13 +189,100 @@ func waitForKeyExpiry(ctx context.Context, lc *local.Client, open func(string), 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			expiry, err := readKeyExpiry(ctx, lc)
-			if err != nil {
+			st, err := ReadStatus(dir)
+			if err != nil || st.State != "Running" || time.Since(st.Updated) > time.Minute {
 				continue
 			}
-			if announce(expiry) {
+			if st.KeyExpiry.IsZero() {
+				report(status, keyExpiryOffStatus())
 				return
 			}
+			report(status, keyExpiryPendingStatus(st.KeyExpiry))
+		}
+	}
+}
+
+// Status is what the service last saw of its node, for the setup window.
+type Status struct {
+	State     string    `json:"state"`
+	KeyExpiry time.Time `json:"keyExpiry"`
+	Updated   time.Time `json:"updated"`
+}
+
+const statusFile = "nomadvnc-status.json"
+
+// ReadStatus reads the status the service last wrote.
+func ReadStatus(dir string) (Status, error) {
+	var st Status
+	data, err := os.ReadFile(filepath.Join(dir, statusFile))
+	if err != nil {
+		return st, err
+	}
+	err = json.Unmarshal(data, &st)
+	return st, err
+}
+
+func writeStatus(dir string, st Status) {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return
+	}
+	tmp := filepath.Join(dir, statusFile+".tmp")
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		_ = os.Rename(tmp, filepath.Join(dir, statusFile))
+	}
+}
+
+// StatusInterval is how often Watch checks the node.
+const StatusInterval = 10 * time.Second
+
+// UnhealthyAfter is how long the node may be anything but Running (other
+// than signed out) before Watch asks for a restart.
+const UnhealthyAfter = 2 * time.Minute
+
+// Watch keeps the status file current and logs state changes. It returns
+// an error when the node has not been running for UnhealthyAfter, so the
+// caller can restart it, and nil when ctx ends. A signed-out node is
+// reported but not restarted: only a new sign-in fixes that.
+func Watch(ctx context.Context, server *tsnet.Server, dir string, logf func(string, ...any)) error {
+	lc, err := server.LocalClient()
+	if err != nil {
+		return err
+	}
+	ticker := time.NewTicker(StatusInterval)
+	defer ticker.Stop()
+	var badSince time.Time
+	last := ""
+	for {
+		state, expiry := "Unknown", time.Time{}
+		if st, err := lc.Status(ctx); err == nil {
+			state = st.BackendState
+			if st.Self != nil && st.Self.KeyExpiry != nil {
+				expiry = st.Self.KeyExpiry.UTC()
+			}
+		}
+		now := time.Now()
+		writeStatus(dir, Status{State: state, KeyExpiry: expiry, Updated: now})
+		if state != last {
+			if state == "NeedsLogin" {
+				logf("tailscale: signed out (key expired or this PC was removed). Open NomadVNC Host and choose Sign In with Tailscale")
+			} else {
+				logf("tailscale: %s", state)
+			}
+			last = state
+		}
+		switch {
+		case state == "Running" || state == "NeedsLogin":
+			badSince = time.Time{}
+		case badSince.IsZero():
+			badSince = now
+		case now.Sub(badSince) >= UnhealthyAfter:
+			return fmt.Errorf("tailscale not connected for %s (state %s)", UnhealthyAfter, state)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
 		}
 	}
 }
@@ -250,18 +326,18 @@ func CurrentKeyExpiry(ctx context.Context, server *tsnet.Server) (time.Time, err
 
 // Listen serves TCP on the tailnet. It does not start a node when dir has
 // no saved identity.
-func Listen(dir, hostname string) (net.Listener, *tsnet.Server, error) {
+func Listen(dir, hostname string, port int) (net.Listener, *tsnet.Server, error) {
 	if !HasIdentity(dir) {
 		return nil, nil, ErrNoIdentity
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, err
 	}
 	server := newServer(dir, hostname)
 	if err := server.Start(); err != nil {
 		return nil, nil, err
 	}
-	ln, err := server.Listen("tcp", ":5900")
+	ln, err := server.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		server.Close()
 		return nil, nil, err

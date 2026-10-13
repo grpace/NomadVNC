@@ -14,8 +14,6 @@ const (
 	// HelperListen is the loopback address the screen-sharing process binds.
 	// The service proxies the public port to it. Loopback is not the LAN.
 	HelperListen = "127.0.0.1:5910"
-	// PublicListen is the port NomadVNC connects to.
-	PublicListen = ":5900"
 )
 
 // DataDir is the per-machine configuration directory.

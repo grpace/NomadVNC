@@ -61,3 +61,42 @@ func TestDeviceHostnameUsesChosenName(t *testing.T) {
 		t.Fatalf("default hostname = %q", got)
 	}
 }
+
+func TestStatusFileRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ReadStatus(dir); err == nil {
+		t.Fatal("read a status that was never written")
+	}
+	want := Status{State: "Running", KeyExpiry: time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC), Updated: time.Now().UTC().Round(time.Second)}
+	writeStatus(dir, want)
+	got, err := ReadStatus(dir)
+	if err != nil || got.State != want.State || !got.KeyExpiry.Equal(want.KeyExpiry) || !got.Updated.Equal(want.Updated) {
+		t.Fatalf("status = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+func TestWaitForKeyExpiryOffFollowsTheService(t *testing.T) {
+	dir := t.TempDir()
+	var opened []string
+	var statuses []string
+	done := make(chan struct{})
+	go func() {
+		WaitForKeyExpiryOff(t.Context(), dir, time.Now().Add(24*time.Hour),
+			func(u string) { opened = append(opened, u) },
+			func(s string) { statuses = append(statuses, s) })
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	writeStatus(dir, Status{State: "Running", Updated: time.Now()})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("kept waiting after the service reported key expiry off")
+	}
+	if len(opened) != 1 || opened[0] != tailscaleMachinesURL {
+		t.Fatalf("opened %v", opened)
+	}
+	if last := statuses[len(statuses)-1]; last != keyExpiryOffStatus() {
+		t.Fatalf("last status %q", last)
+	}
+}

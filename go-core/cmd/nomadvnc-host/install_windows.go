@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nomadvnc/nomadvnc/go-core/internal/hostcore"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 func isElevated() bool {
@@ -51,7 +53,8 @@ func relaunchElevated() error {
 	if err != nil {
 		return err
 	}
-	args := strings.Join(os.Args[1:], " ")
+	// Quoted again, or a name with a space in it would arrive in pieces.
+	args := windows.ComposeCommandLine(os.Args[1:])
 	var argPtr *uint16
 	if args != "" {
 		argPtr, err = windows.UTF16PtrFromString(args)
@@ -62,23 +65,32 @@ func relaunchElevated() error {
 	return windows.ShellExecute(0, verb, exePtr, argPtr, nil, windows.SW_SHOWNORMAL)
 }
 
-func installHost(password string) error {
+// installHost installs or updates the host: the password viewers give,
+// the port they connect to, and whether an icon sits in the system tray.
+func installHost(password string, port int, tray bool) (err error) {
 	if err := hostcore.ValidatePassword(password); err != nil {
 		return err
 	}
 	if !isPrivileged() {
 		return errors.New("administrator approval is required")
 	}
-	if err := os.MkdirAll(dataDir(), 0o755); err != nil {
-		return err
+	if err := lockDataDir(); err != nil {
+		return fmt.Errorf("protect %s: %w", dataDir(), err)
 	}
-	shareDataWithUsers()
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	dest := installedExe()
 	stopService()
+	// An upgrade that fails part way must not leave a PC that was
+	// reachable switched off. Starting what is there is harmless when
+	// nothing was installed before.
+	defer func() {
+		if err != nil {
+			_ = startService()
+		}
+	}()
 	if !sameFile(exe, dest) {
 		if err := copyExecutable(exe, dest); err != nil {
 			return err
@@ -87,10 +99,16 @@ func installHost(password string) error {
 	if err := writePassword(password); err != nil {
 		return err
 	}
+	if err := savePort(port); err != nil {
+		return err
+	}
+	if err := saveTrayWanted(tray); err != nil {
+		return err
+	}
 	if err := preferPrivateNetwork(); err != nil {
 		logf("network profile: %v", err)
 	}
-	if err := installFirewall(); err != nil {
+	if err := installFirewall(port); err != nil {
 		return err
 	}
 	if err := installService(dest); err != nil {
@@ -99,7 +117,52 @@ func installHost(password string) error {
 	if err := installShortcut(dest); err != nil {
 		logf("start menu shortcut: %v", err)
 	}
+	if err := registerApp(dest); err != nil {
+		logf("list under Installed apps: %v", err)
+	}
 	return startService()
+}
+
+// uninstallKey is where Windows keeps what it lists under Installed apps.
+const uninstallKey = `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NomadVNCHost`
+
+// registerApp lists the host under Installed apps in Windows Settings, so
+// it can be found and removed there like any other program, and so tools
+// that manage PCs can see which version each one has.
+func registerApp(exe string) error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, uninstallKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	quoted := `"` + exe + `"`
+	for name, value := range map[string]string{
+		"DisplayName":     "NomadVNC Host",
+		"DisplayVersion":  version,
+		"Publisher":       "Greg Pace",
+		"InstallLocation": filepath.Dir(exe),
+		"DisplayIcon":     exe,
+		"URLInfoAbout":    "https://greg.tech/nomadvnc/",
+		"InstallDate":     time.Now().Format("20060102"),
+		// Settings runs the first; tools that must not stop to ask run
+		// the second, which keeps the saved password.
+		"UninstallString":      quoted + " --uninstall --ask",
+		"QuietUninstallString": quoted + " --uninstall",
+	} {
+		if err := key.SetStringValue(name, value); err != nil {
+			return err
+		}
+	}
+	numbers := map[string]uint32{"NoModify": 1, "NoRepair": 1}
+	if info, err := os.Stat(exe); err == nil {
+		numbers["EstimatedSize"] = uint32(info.Size() / 1024) // in KB
+	}
+	for name, value := range numbers {
+		if err := key.SetDWordValue(name, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func uninstallHost(deleteData bool) error {
@@ -110,15 +173,52 @@ func uninstallHost(deleteData bool) error {
 	_ = exec.Command("sc.exe", "delete", hostcore.ServiceName).Run()
 	_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+hostcore.FirewallRule).Run()
 	_ = os.Remove(shortcutPath())
-	// The setup window may be this exe, so deleting the folder can fail
-	// until that window closes. A stopped service no longer locks it.
-	if running, err := os.Executable(); err == nil && !sameFile(running, installedExe()) {
-		_ = os.RemoveAll(hostcore.InstallDir(os.Getenv("ProgramFiles")))
-	}
+	_ = registry.DeleteKey(registry.LOCAL_MACHINE, uninstallKey)
+	removeInstallDir()
+	// Last, and nothing may write the log after it: logging would put the
+	// folder back.
 	if deleteData {
 		_ = os.RemoveAll(dataDir())
 	}
 	return nil
+}
+
+// removeInstallDir deletes the program folder. The Start menu shortcut and
+// Installed apps both run the copy inside it, and a running program can't
+// be deleted. It can be moved, so it is moved out of the folder to the
+// temporary folder, and Windows deletes it there at the next restart.
+func removeInstallDir() {
+	dir := hostcore.InstallDir(os.Getenv("ProgramFiles"))
+	if running, err := os.Executable(); err == nil && sameFile(running, installedExe()) {
+		aside := filepath.Join(os.TempDir(), fmt.Sprintf("nomadvnc-host-removed-%d.exe", os.Getpid()))
+		if err := os.Rename(running, aside); err != nil {
+			// The temporary folder is on another drive, say. Leave both
+			// the exe and its folder for the restart to clear.
+			logf("move the running program aside: %v", err)
+			deleteAtRestart(running)
+			deleteAtRestart(dir)
+			return
+		}
+		deleteAtRestart(aside)
+	}
+	// Something may hold the folder for a moment: a virus scan of the exe
+	// just moved, an older setup window still open.
+	for attempt := 0; attempt < 10; attempt++ {
+		if os.RemoveAll(dir) == nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	deleteAtRestart(dir)
+}
+
+// deleteAtRestart has Windows delete path the next time it starts.
+func deleteAtRestart(path string) {
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return
+	}
+	_ = windows.MoveFileEx(ptr, nil, windows.MOVEFILE_DELAY_UNTIL_REBOOT)
 }
 
 func sameFile(a, b string) bool {
@@ -152,21 +252,23 @@ func copyExecutable(src, dest string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	_ = os.Remove(dest)
+	// The old program may still be running: its setup window, left open.
+	// Windows won't delete or overwrite a running program, but will move
+	// it, so it goes to the temporary folder for Windows to delete at the
+	// next restart.
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		aside := filepath.Join(os.TempDir(), fmt.Sprintf("nomadvnc-host-replaced-%d.exe", os.Getpid()))
+		if err := os.Rename(dest, aside); err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("replace %s (close any NomadVNC Host window and try again): %w", dest, err)
+		}
+		deleteAtRestart(aside)
+	}
 	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return nil
-}
-
-func shareDataWithUsers() {
-	// The service runs as LocalSystem and the screen session runs as the
-	// signed-in user. Both need to read the password and append the log.
-	dir := dataDir()
-	out, err := exec.Command("icacls", dir, "/grant", "*S-1-5-32-545:(OI)(CI)M").CombinedOutput()
-	if err != nil {
-		logf("data folder permissions: %v: %s", err, bytesTrim(out))
-	}
 }
 
 func preferPrivateNetwork() error {
@@ -181,7 +283,7 @@ func preferPrivateNetwork() error {
 	return nil
 }
 
-func installFirewall() error {
+func installFirewall(port int) error {
 	_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+hostcore.FirewallRule).Run()
 	out, err := exec.Command(
 		"netsh", "advfirewall", "firewall", "add", "rule",
@@ -189,7 +291,7 @@ func installFirewall() error {
 		"dir=in",
 		"action=allow",
 		"protocol=TCP",
-		"localport=5900",
+		fmt.Sprintf("localport=%d", port),
 		"profile=private,domain",
 	).CombinedOutput()
 	if err != nil {
@@ -199,6 +301,9 @@ func installFirewall() error {
 }
 
 func installService(exe string) error {
+	// Quoted, so Windows can't read the space in "Program Files" as the
+	// end of the program name and start C:\Program.exe instead.
+	exe = `"` + exe + `"`
 	query := exec.Command("sc.exe", "query", hostcore.ServiceName)
 	if err := query.Run(); err != nil {
 		out, err := exec.Command(
@@ -223,6 +328,9 @@ func installService(exe string) error {
 	}
 	_ = exec.Command("sc.exe", "description", hostcore.ServiceName, "Shares this PC's screen with NomadVNC.").Run()
 	_ = exec.Command("sc.exe", "failure", hostcore.ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/5000/restart/5000").Run()
+	// Also restart after the service stops itself with an error, not only
+	// after a crash.
+	_ = exec.Command("sc.exe", "failureflag", hostcore.ServiceName, "1").Run()
 	return nil
 }
 
