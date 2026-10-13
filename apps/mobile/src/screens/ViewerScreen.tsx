@@ -26,6 +26,7 @@ import {
   isCredentialProblem,
   parseViewerEvent,
   reconnectDelayForAttempt,
+  reconnectExhaustedMessage,
   RESUME_PROBE_MS,
   resumeActionForState,
   linkHealthFromEvent,
@@ -86,7 +87,9 @@ type ConnState =
   | { kind: "connecting" }
   | { kind: "connected" }
   | { kind: "reconnecting"; attempt: number }
-  | { kind: "failed"; reason: string }
+  // `lost`: the session had been live, so this is a lost connection rather
+  // than one that never got through.
+  | { kind: "failed"; reason: string; lost?: boolean }
   | { kind: "authFailed" };
 
 /**
@@ -352,7 +355,8 @@ export function ViewerScreen({
     if (delay === null) {
       setConnState({
         kind: "failed",
-        reason: "Connection lost. Automatic retry exhausted",
+        lost: true,
+        reason: reconnectExhaustedMessage(session.host),
       });
       return;
     }
@@ -361,7 +365,7 @@ export function ViewerScreen({
     reconnectTimerRef.current = setTimeout(() => {
       remountViewer();
     }, delay);
-  }, [clearTimers, remountViewer]);
+  }, [clearTimers, remountViewer, session.host]);
 
   // Keep the watchdog's reconnect hook current.
   scheduleReconnectRef.current = scheduleReconnect;
@@ -869,7 +873,7 @@ export function ViewerScreen({
       <KeyboardAvoidingView style={styles.body} behavior="padding">
         {connState.kind === "failed" ? (
           <View style={styles.center}>
-            <Text style={styles.errorTitle}>Couldn't Connect</Text>
+            <Text style={styles.errorTitle}>{connState.lost ? "Connection Lost" : "Couldn't Connect"}</Text>
             <Text style={styles.errorDetail}>{connState.reason}</Text>
             <Pressable
               onPress={resetAndConnect}

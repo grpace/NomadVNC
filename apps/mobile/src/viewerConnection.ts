@@ -105,6 +105,15 @@ export function isCredentialProblem(state: string | undefined): boolean {
 }
 
 /**
+ * What to say when a session that was working dropped and every automatic
+ * reconnect failed. `host` is left out when the session has none to show.
+ */
+export function reconnectExhaustedMessage(host: string | undefined): string {
+  const where = host ? ` to ${host}` : "";
+  return `Couldn't reconnect${where} after ${MAX_RECONNECT_ATTEMPTS} tries. The computer may be off or out of reach, or its VNC server may have stopped.`;
+}
+
+/**
  * Delay before the given reconnect attempt (0-based), or null when the
  * budget is exhausted and the UI should offer manual retry.
  */

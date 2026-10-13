@@ -7,6 +7,7 @@ import {
   parseViewerEvent,
   RECONNECT_DELAYS_MS,
   reconnectDelayForAttempt,
+  reconnectExhaustedMessage,
   RESUME_PROBE_MS,
   resumeActionForState,
 } from "./viewerConnection";
@@ -67,6 +68,14 @@ describe("reconnect backoff", () => {
   it("returns null once the budget is exhausted", () => {
     expect(reconnectDelayForAttempt(MAX_RECONNECT_ATTEMPTS)).toBeNull();
     expect(reconnectDelayForAttempt(99)).toBeNull();
+  });
+
+  it("says how many tries failed and where, once the budget is spent", () => {
+    expect(reconnectExhaustedMessage("office-pc")).toBe(
+      "Couldn't reconnect to office-pc after 5 tries. The computer may be off or out of reach, or its VNC server may have stopped.",
+    );
+    expect(reconnectExhaustedMessage(undefined)).toMatch(/^Couldn't reconnect after 5 tries\./);
+    expect(reconnectExhaustedMessage("")).toMatch(/^Couldn't reconnect after 5 tries\./);
   });
 
   it("returns null for invalid attempts", () => {
