@@ -338,8 +338,19 @@ func TestServerSendsTilesOutsideEarlierRequest(t *testing.T) {
 	if len(rects) != 1 || rects[0].X != TileSize {
 		t.Fatalf("second update = %+v, want the right tile", rects)
 	}
+	// Nothing changed since, so an incremental request waits for a change
+	// instead of getting an empty reply.
 	requestUpdate(t, conn, true, w, h)
-	if rects, _ := readUpdate(t, conn, 4); len(rects) != 0 {
-		t.Fatalf("third update = %+v, want nothing", rects)
+	expectSilence(t, conn)
+}
+
+// expectSilence checks that the server sends nothing for a while.
+func expectSilence(t *testing.T, conn net.Conn) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	var b [1]byte
+	if n, err := conn.Read(b[:]); n > 0 || err == nil {
+		t.Fatalf("got message type %d, want no reply", b[0])
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 }

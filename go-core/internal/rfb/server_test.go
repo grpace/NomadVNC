@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -22,6 +23,7 @@ func TestServerAuthFrameAndInput(t *testing.T) {
 			0, 0, 0, 0,
 		},
 	}
+	var mu sync.Mutex
 	var gotKey uint32
 	var gotDown bool
 	var gotX, gotY int
@@ -30,10 +32,14 @@ func TestServerAuthFrameAndInput(t *testing.T) {
 		Password: "secret",
 		Capture:  func() (Frame, error) { return frame, nil },
 		Key: func(keysym uint32, down bool) {
+			mu.Lock()
+			defer mu.Unlock()
 			gotKey = keysym
 			gotDown = down
 		},
 		Pointer: func(x, y int, buttons byte) {
+			mu.Lock()
+			defer mu.Unlock()
 			gotX, gotY, gotButtons = x, y, buttons
 		},
 	}
@@ -102,11 +108,62 @@ func TestServerAuthFrameAndInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
 	if !gotDown || gotKey != 0x41 {
 		t.Fatalf("key = down:%v sym:%#x", gotDown, gotKey)
 	}
 	if gotX != 1 || gotY != 1 || gotButtons != 1 {
 		t.Fatalf("pointer = %d,%d buttons %d", gotX, gotY, gotButtons)
+	}
+}
+
+func TestServerReportsDisconnect(t *testing.T) {
+	gone := make(chan struct{}, 4)
+	server := &Server{
+		Password:     "secret",
+		Capture:      func() (Frame, error) { return Frame{Width: 2, Height: 2, Pix: make([]byte, 16)}, nil },
+		Disconnected: func() { gone <- struct{}{} },
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go server.Serve(t.Context(), ln)
+
+	// A wrong password never signs in, so it is not a viewer leaving.
+	bad, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = bad.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := clientHandshake(bad, "wrong"); err == nil {
+		t.Fatal("wrong password accepted")
+	}
+	bad.Close()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := clientHandshake(conn, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := readServerInit(conn); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gone:
+		t.Fatal("Disconnected called while the viewer is connected")
+	case <-time.After(100 * time.Millisecond):
+	}
+	conn.Close()
+	select {
+	case <-gone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Disconnected not called after the viewer left")
 	}
 }
 

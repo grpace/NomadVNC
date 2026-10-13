@@ -1,5 +1,7 @@
 package rfb
 
+import "bytes"
+
 // TileSize is the width and height of a raw rectangle sent for a changed
 // region. Smaller tiles mean less unchanged data on the wire.
 const TileSize = 64
@@ -44,10 +46,8 @@ func tileChanged(prev, next []byte, width, x, y, w, h int) bool {
 	rowBytes := w * 4
 	for row := 0; row < h; row++ {
 		start := ((y+row)*width + x) * 4
-		for i := 0; i < rowBytes; i++ {
-			if prev[start+i] != next[start+i] {
-				return true
-			}
+		if !bytes.Equal(prev[start:start+rowBytes], next[start:start+rowBytes]) {
+			return true
 		}
 	}
 	return false
