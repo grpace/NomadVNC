@@ -129,8 +129,12 @@ func (p *SessionProxy) handleViewer(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
+	// Screen updates are large; the default 4 KB buffers would split each
+	// one into dozens of writes.
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(*http.Request) bool { return true },
+		CheckOrigin:     func(*http.Request) bool { return true },
+		ReadBufferSize:  64 * 1024,
+		WriteBufferSize: 64 * 1024,
 	}
 
 	wsConn, err := upgrader.Upgrade(writer, request, nil)
@@ -174,7 +178,9 @@ func (p *SessionProxy) handleViewer(writer http.ResponseWriter, request *http.Re
 	}()
 
 	go func() {
-		buffer := make([]byte, 32*1024)
+		// One read can carry most of a compressed frame, which then goes
+		// to the viewer as a single WebSocket message.
+		buffer := make([]byte, 256*1024)
 		for {
 			readCount, readErr := tcpConn.Read(buffer)
 			if readCount > 0 {

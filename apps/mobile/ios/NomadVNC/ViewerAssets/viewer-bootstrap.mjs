@@ -339,7 +339,10 @@ window.addEventListener("message", (event) => {
     case "setQuality":
       if (typeof cmd.quality === "number") {
         rfb.qualityLevel = Math.max(0, Math.min(9, cmd.quality));
-        rfb.compressionLevel = cmd.quality >= 7 ? 0 : (9 - cmd.quality);
+        // Lower quality is for slower links, so compress harder there. Never
+        // 0: servers take it as "don't compress", which floods any link
+        // slower than a LAN; 1 costs them little CPU.
+        rfb.compressionLevel = cmd.quality >= 8 ? 1 : cmd.quality === 7 ? 2 : (9 - cmd.quality);
       }
       break;
 
