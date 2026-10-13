@@ -240,6 +240,9 @@ describe("App session flows", () => {
         );
       });
       expect(container.querySelector(".viewer-reconnect-overlay")).toBeNull();
+      // The status line stops reporting the retry once it has succeeded.
+      expect(container.textContent).not.toContain("Retrying");
+      expect(container.textContent).not.toContain("Connection lost");
 
       // A recovered session schedules no further retries.
       await act(async () => {
@@ -268,6 +271,14 @@ describe("App session flows", () => {
     expect(native.stopVncSession).toHaveBeenCalledWith("session-1");
     expect(container.querySelector(".viewer-frame iframe")).not.toBe(firstFrame);
     expect(container.textContent).not.toContain("Retrying");
+
+    // "Reconnecting to …" shows while the new viewer signs in, and goes
+    // once it is connected.
+    expect(container.textContent).toContain("Reconnecting to");
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "viewerState", state: "connected" } }));
+    });
+    expect(container.textContent).not.toContain("Reconnecting to");
   });
 
   it("asks for a new password instead of retrying when the server rejects it", async () => {

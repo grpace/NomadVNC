@@ -1657,6 +1657,9 @@ export function App() {
       setViewerLive(true);
       sessionEverLiveRef.current = true;
       setViewerNeverConnected(false);
+      // "Retrying (1/5)…" and "Reconnecting to …" are over once the viewer
+      // is connected; left alone they would sit there for the whole session.
+      setStatus((current) => (current.variant === "connecting" ? { message: "Idle", variant: "info" } : current));
       void authRecoveryRef.current.onConnected();
       return;
     }
