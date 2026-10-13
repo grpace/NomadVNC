@@ -151,6 +151,17 @@ rfb.addEventListener("disconnect", (event) => {
   notifyParent({ type: "viewerState", state: "disconnected" });
 });
 
+// noVNC runs some sign-in steps (Apple Remote Desktop's encryption) as
+// promises it never catches. A failure there would leave the server waiting
+// until the session timed out, so end the attempt at once instead; the
+// parent reports it as a connection that never completed.
+window.addEventListener("unhandledrejection", (event) => {
+  if (rfb._rfbConnectionState !== "connecting") return;
+  console.error("viewer: sign-in step failed", event.reason);
+  setStatus("Couldn't sign in", false);
+  rfb.disconnect();
+});
+
 rfb.addEventListener("credentialsrequired", () => {
   setStatus("Credentials required");
   notifyParent({ type: "viewerState", state: "credentialsRequired" });

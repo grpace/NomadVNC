@@ -929,7 +929,11 @@ export function ViewerScreen({
               key={`viewer-${webviewKey}`}
               ref={webViewRef}
               originWhitelist={["*"]}
-              source={{ html }}
+              // The asset server's loopback origin makes the page a secure
+              // context. Without a base URL it is an opaque origin with no
+              // crypto.subtle, and macOS Screen Sharing sign-in (Apple
+              // Remote Desktop auth) stalls before sending credentials.
+              source={{ html, baseUrl: session.assetBaseUrl }}
               style={styles.webview}
               injectedJavaScriptBeforeContentLoaded={POST_MESSAGE_SHIM}
               onMessage={handleViewerMessage}
