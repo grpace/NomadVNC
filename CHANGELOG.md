@@ -5,6 +5,32 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.2.0 — 2026-10-13
+
+- NomadVNC Host is much smoother. It compresses the screen (Tight, with JPEG for photos and video, and ZRLE for RealVNC) instead of sending raw pixels, and NomadVNC viewers get a steady stream of changes instead of asking for each frame. In tests with a NomadVNC viewer, an animated screen went from about 14 to about 60 frames a second on a local network, and from about 14 to about 35 over a link with a 50 ms round trip.
+- NomadVNC Host follows the viewer's quality setting: lower settings send photos and video as smaller JPEG, **Lossless** sends exact pixels, and text and flat areas stay sharp at every setting. When the viewer raises quality, for example once input stops, the blurred parts are resent sharp.
+- Typing works on a NomadVNC Host PC. Before, every key press was dropped: the host gave Windows a key event of the wrong size, and Windows refused it. Only the mouse worked.
+- A locked NomadVNC Host PC shows its lock screen and can be unlocked from the viewer. Before, it showed a broken picture of the desktop behind the lock. Windows approval prompts ("Do you want to allow this app to make changes?") show and can be answered, and windows that run as administrator take clicks and keys. One connection lasts through locking, unlocking and signing in; before, signing in dropped it.
+- Keys reach a NomadVNC Host PC as key presses on that PC's own keyboard layout, so shortcuts such as Ctrl with + or - work. Characters the layout has no key for, and capitals and symbols from a phone keyboard, are typed as text. Insert, Caps Lock, Print Screen, the Menu key, the number pad and the right-hand Shift, Ctrl and Alt are sent as well.
+- When a viewer disconnects while holding a key or dragging, the PC lets go of it.
+- NomadVNC Host's setup window has a new look. It shows the logo, whether the host is running, and what each field is for, and it is light or dark to match Windows. The black console window no longer opens behind it.
+- NomadVNC Host's setup window no longer freezes during **Sign In with Tailscale**. Before, it stopped responding while the sign-in ran and Windows offered to close it.
+- NomadVNC Host can use a port other than 5900: set **Port** in its window, or pass `--port`. The firewall rule follows it.
+- NomadVNC Host shows an icon in the system tray while someone is signed in. Pointing at it says whether the screen is being shared and on which port, and clicking it opens the setup window. `--no-tray` on the install command leaves it out.
+- NomadVNC Host is listed under **Installed apps** in Windows Settings, with its version, and can be uninstalled from there. Uninstalling removes its program folder. Before, uninstalling from the Start menu shortcut left the program on the PC.
+- Upgrading NomadVNC Host while its setup window is open works. Before, the upgrade failed and left the host stopped, so the PC could not be reached. An install that fails for any other reason now starts the host again.
+- The NomadVNC Host exe carries its name, version and icon, and `--version` prints the version. In a script, run it with `start /wait` so the command prompt waits for it to finish.
+- Clicks reach a NomadVNC Host PC at once even while the screen is updating. Before, input could wait up to a second behind a screen capture on a still screen. Moving the pointer over a still screen now shows on the viewer too.
+- NomadVNC Host always starts on its fast screen capture and returns to it after an interruption. Before, a session that started at the wrong moment stayed on the slow one.
+- The pointer is drawn by the viewer from its shape, so it moves without delay on any link and moving it costs no screen updates. Viewers that can't draw it (older ones) still get it in the picture, and moving it over a still screen now shows there too.
+- NomadVNC Host's saved VNC password and Tailscale key are readable only by Windows administrators and the service. Before, any user account on the PC could read both. The screen process gets what it needs from the service instead. Installing or starting this version fixes existing installs.
+- NomadVNC Host only hands viewers to the screen process it started, so another program on the PC can't pose as it to see what remote users type.
+- After three wrong VNC passwords, each further attempt waits longer, up to 30 seconds. A connection that doesn't finish signing in within a minute is closed, and NomadVNC Host carries at most 32 connections at a time.
+- NomadVNC Host stays reachable while Tailscale sign-in waits for key expiry to be turned off; before, the service stayed stopped until then, or until the setup window closed. The service also checks its Tailscale connection and reconnects if it has been down for two minutes, and Windows now restarts the service if it ever stops with an error. If the screen process can't start, for example because another program has its port, the service retries less and less often instead of every two seconds.
+- On the desktop, the status line stops saying "Connection lost. Retrying (1/5)…" once the session has reconnected. Before, it kept saying so for the rest of the session.
+- On a phone, a session that drops and can't be reconnected is titled **Connection Lost** and says how many tries failed and what to check. Before, it was titled "Couldn't Connect", as if it had never worked.
+- Viewers no longer turn compression off at the higher quality settings, which flooded slower links when connecting to other VNC servers, and they move screen data through the app's relay in larger pieces.
+
 ## 1.1.2 — 2026-10-13
 
 - Signing out of a Nomad account signs out only that device. Your other phones and computers stay signed in. **Sign Out of All Devices** (phone: Settings → Account; desktop: Account) signs out everywhere, for example after losing a phone.

@@ -82,8 +82,8 @@ android {
         applicationId "com.nomadvnc"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.1.2"
+        versionCode 5
+        versionName "1.2.0"
     }
     // Debug builds use Gradle's per-machine debug keystore
     // (~/.android/debug.keystore). Release builds use the upload key named by

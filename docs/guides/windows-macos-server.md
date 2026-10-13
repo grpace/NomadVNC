@@ -48,8 +48,12 @@ That writes `go-core/bin/nomadvnc-host.exe`.
 
 1. Copy the exe to the PC and run it.
 2. Approve the administrator prompt.
-3. Set **Name** to what you want to see on your other devices, enter a
-   password of 8 characters or fewer, and choose **Install and Start**.
+3. Enter a password of 8 characters or fewer and choose **Install and
+   Start**. **Name** is only a label: the viewer shows it for this PC, and
+   it is the PC's name on your tailnet if you sign in to Tailscale. It
+   starts as the Windows computer name. **Port** is 5900, the usual VNC
+   port; change it if something else on the PC uses that one, and connect
+   to the port you chose.
 4. Remote access is optional, and any VPN works. On the same network, skip
    this and connect to the PC's address. To use another VPN (WireGuard,
    OpenVPN, or anything else that can reach the PC), connect to the address
@@ -59,7 +63,12 @@ That writes `go-core/bin/nomadvnc-host.exe`.
    Machines page and choose **Disable Key Expiry**. Until you do, the PC
    drops off on the date Tailscale shows.
 
-After setup it starts at boot, with no window. Open **NomadVNC Host** from
+After setup it runs as a Windows service: it starts at boot, before
+anyone signs in, with no window, and Windows restarts it if it stops.
+Its saved password and Tailscale key are readable only by
+administrators. If the Tailscale connection drops, the host reconnects
+on its own; it can only stay on the tailnet long term once key expiry is
+off for this PC (step 4). Open **NomadVNC Host** from
 the Start menu to change the password, sign in to Tailscale, or uninstall.
 
 In NomadVNC, connect to that PC on port **5900** with the password from
@@ -74,33 +83,57 @@ RealVNC warns that the connection is not encrypted. The VNC connection
 itself isn't, but Tailscale or your VPN encrypts everything between the
 two devices, so it is safe to continue. Any picture-quality setting works.
 
+The host compresses what it sends. NomadVNC viewers get Tight: photos
+and video as JPEG at the viewer's quality setting, and text and flat
+areas exact. **Lossless** sends everything exact. RealVNC gets ZRLE,
+which is always exact. NomadVNC viewers also receive changes as they
+happen rather than asking for each frame, which keeps a link with a long
+round trip smooth.
+
 Setup marks a Public network as Private so other computers on that network
 can connect. It does not open the port on a network Windows still calls
-Public, and it does not forward the port to the internet. While the PC is
-locked or sitting at the Windows sign-in screen, the connection shows that
-screen. After someone signs in, it follows their desktop.
+Public, and it does not forward the port to the internet.
 
-Uninstall from the NomadVNC Host window. It asks before deleting the saved
-password and Tailscale sign-in.
+While the PC is locked or sitting at the Windows sign-in screen, the
+connection shows that screen, and you can unlock it or sign in from the
+viewer. The connection stays up as you do. Windows approval prompts ("Do
+you want to allow this app to make changes?") show as well, and you can
+answer them. The one thing a viewer can't send is Ctrl+Alt+Del, so a PC
+set to require it before sign-in, as some work PCs are, can't be unlocked
+this way.
+
+The host keeps running after you close the window, and starts with the
+PC. Its icon, a blue shield, sits in the system tray while someone is
+signed in; Windows 11 keeps new icons under the **^** arrow until you
+drag them onto the taskbar. Point at it to see whether the screen is
+being shared and on which port, and click it to open the window again and
+change the name, the port or the password.
+
+Uninstall from the NomadVNC Host window, or from **Installed apps** in
+Windows Settings. Either asks before deleting the saved password and
+Tailscale sign-in.
 
 ## A fleet of Windows PCs
 
 If you manage a fleet of computers, NomadVNC Host is the easy configuration
 on each Windows PC. You run it once per machine. After that it starts at
-every boot, before anyone signs in to Windows, with no window and no tray
-icon. Give each PC its own name so you can tell them apart.
+every boot, before anyone signs in to Windows, with no window. Give each PC its own name so you can tell them apart.
 
 On each PC, open an administrator command prompt and run the downloaded
 exe. The command does not open the setup window:
 
 ```bat
-NomadVNC-Host-<version>-x64.exe --install --name "front-desk" --password "8chars"
+start /wait "" NomadVNC-Host-<version>-x64.exe --install --name "front-desk" --password "8chars"
 ```
 
-`--name` is what you will see from your other devices. Letters, numbers,
-and spaces are fine. `Front Desk` is saved as `front-desk`. The password
-is 8 characters or fewer. When the command prints that NomadVNC Host is
-installed and running, that PC is done.
+Add `--port 5901` to use a port other than 5900, and `--no-tray` to leave
+the icon out of the system tray. `start /wait` makes the prompt wait until
+it has finished, and leaves
+`%ERRORLEVEL%` at 0 when it worked. `--name` is what you will see from
+your other devices. Letters, numbers, and spaces are fine. `Front Desk`
+is saved as `front-desk`. The password is 8 characters or fewer. When the
+command prints that NomadVNC Host is installed and running, that PC is
+done.
 
 The password is on that command line, so other admins on the PC can see
 it. To keep it off the command line, pipe it instead:
@@ -118,8 +151,19 @@ and turn off key expiry. Skip it when the PCs are already on a network
 you can reach.
 
 To change the password or the name later, run the same `--install`
-command again. To move to a newer host exe, run that command with the
+command again. The port stays as it was unless you pass `--port`. To move to a newer host exe, run that command with the
 new file. It replaces the program and keeps starting at boot.
+
+Each PC lists NomadVNC Host and its version under **Installed apps**, where
+management tools read it. To check or remove it from a script:
+
+```bat
+"C:\Program Files\NomadVNC Host\nomadvnc-host.exe" --version
+start /wait "" "C:\Program Files\NomadVNC Host\nomadvnc-host.exe" --uninstall
+```
+
+`--uninstall` keeps the saved password and Tailscale sign-in, so a later
+install picks them up. Add `--delete-data` to remove those too.
 
 To remove it without a window:
 

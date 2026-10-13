@@ -86,6 +86,7 @@ touch gestures, the keyboard, and the clipboard.
 | What you see | Check |
 |---|---|
 | "Couldn't Connect" | VNC server running? Right port? Firewall allows it from where you are? Computer awake? |
+| "Connection Lost" after a session that was working | The app tried five times to get back. Is the computer still on and awake? Still on the same network or VPN? Then tap **Retry**. |
 | "rejected the password" | Remember only the first 8 characters count. On macOS, set the VNC password under Screen Sharing → Computer Settings. |
 | The machine shows offline in the tailnet list | Tailscale running and signed in on it? Key expired? (See step 2.3.) |
 | Connected, but a black or frozen screen | Linux: the session may be locked or on Wayland without a portal grant. See [linux-server.md](linux-server.md#sharing-the-desktop-youre-already-using). |

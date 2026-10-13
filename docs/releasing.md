@@ -71,7 +71,10 @@ pnpm build:host -- --release # also copies NomadVNC-Host-<version>-x64.exe
 ```
 
 Run `pnpm build:host -- --release` after `pnpm desktop:package:win`. The
-viewer package step clears `apps/desktop/release/` first.
+viewer package step clears `apps/desktop/release/` first. The build
+gives the exe its version (from `package.json`), a manifest, and the icon
+`pnpm icons` renders into `apps/desktop/build/icon.ico`; without that file
+the exe is built with the plain Windows program icon.
 
 Icon generation drives a hidden Electron window, so it needs a display
 (`xvfb-run -a pnpm desktop:package:linux` on a headless machine). The Go

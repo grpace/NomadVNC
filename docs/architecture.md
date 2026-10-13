@@ -54,8 +54,25 @@ renamed in place.
 ## Optional Windows host
 
 `go-core/cmd/nomadvnc-host` is a separate 64-bit Windows program, not part
-of the viewer. It shares that PC's screen on port 5900, including the
-Windows sign-in screen, and starts at boot after setup. Any VNC viewer
+of the viewer. It shares that PC's screen on port 5900 and starts at boot
+after setup. It runs as two processes. The service, in Windows' own
+session, owns port 5900, the Tailscale node and the saved password. It
+starts a screen process in the session on the PC's physical screen, under
+the service's account, and passes each viewer's connection to it over
+loopback after checking the process on that port is the one it started.
+The service also starts a tray icon as the signed-in person, which only
+reports the service's state and opens the setup window. The screen
+process captures and sends input from threads that move to
+whichever desktop Windows is showing: the signed-in desktop, or the
+separate one that holds the lock screen, the sign-in screen and approval
+prompts. One connection therefore lasts through locking, unlocking and
+signing in. Its VNC server
+(`go-core/internal/rfb`) sends Tight (JPEG at the viewer's quality level,
+palettes and zlib for the rest), ZRLE, or Raw, whichever the viewer
+lists first, and supports continuous updates paced by fences, so a
+viewer that asks (noVNC does) is not limited to one frame per round trip.
+Input is read on its own goroutine and is never held up by capture or
+encoding. Any VNC viewer
 can connect, including NomadVNC, and the viewer stays usable with any
 other VNC server. On the local network, no VPN is required. From
 somewhere else, any VPN that can reach port 5900 works. Tailscale sign-in
