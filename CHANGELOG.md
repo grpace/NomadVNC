@@ -5,6 +5,8 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.1.1 — 2026-10-13
+
 - On a phone, saved computers can be edited: name, address, port, group, Mac username, and password. A shared computer keeps its address until its shares are removed.
 - The Mac username for macOS Screen Sharing is saved with each computer and syncs through the Nomad account to your other devices, desktop included.
 - On a phone, picking a computer from your tailnet shows its own password, Mac username, and port. Picking one no longer connects to an address left in Manual Connection.
