@@ -45,8 +45,8 @@
     "electron-builder": "^26.15.3",
     "electron-builder-squirrel-windows": "26.15.3",
     "jsdom": "^26.1.0",
-    "vite": "^6.4.3",
-    "vitest": "4.1.11",
+    "vite": "^6.4.5",
+    "vitest": "4.1.12",
     "wait-on": "^9.0.5"
   },
   "build": {

@@ -23,7 +23,7 @@
     "@react-native/codegen": "0.79.2",
     "@react-native/gradle-plugin": "0.79.2",
     "@react-native/metro-config": "0.79.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "@nomadvnc/domain": "workspace:*",

@@ -43,7 +43,7 @@
     },
     "overrides": {
       "@babel/core": "7.29.6",
-      "@vitest/mocker": "4.1.11",
+      "@vitest/mocker": "4.1.12",
       "@xmldom/xmldom": "0.8.15",
       "app-builder-lib": "26.15.3",
       "axios": "1.20.0",
@@ -71,6 +71,7 @@
       "shell-quote": "1.12.0",
       "tar@7": "7.5.22",
       "tmp": "0.2.7",
+      "vite@6": "6.4.5",
       "ws@6": "6.2.6",
       "ws@7": "7.5.13",
       "ws@8": "8.22.0"
