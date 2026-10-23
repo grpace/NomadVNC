@@ -4,6 +4,9 @@ import {
   type MachineViewPrefs,
 } from "./machineViewPrefs";
 
+/** How several open sessions share the window: one at a time, or tiled. */
+export type SessionLayout = "tabs" | "grid";
+
 /**
  * App-level settings: defaults for new machines and for viewers that have
  * no per-machine prefs yet, plus anything else global. Local-only
@@ -22,6 +25,8 @@ export interface AppSettings {
    * computer name.
    */
   tailscaleHostname: string;
+  /** Layout for two or more open sessions (remembered across runs). */
+  sessionLayout: SessionLayout;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -31,6 +36,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultAutoQuality: true,
   defaultCaptureKeys: false,
   tailscaleHostname: "",
+  sessionLayout: "grid",
 };
 
 const STORAGE_KEY = "nomadvnc.desktop.appSettings.v1";
@@ -65,6 +71,7 @@ export function sanitizeAppSettings(value: unknown): AppSettings {
       typeof candidate.tailscaleHostname === "string"
         ? candidate.tailscaleHostname.trim().slice(0, 63)
         : "",
+    sessionLayout: candidate.sessionLayout === "tabs" ? "tabs" : "grid",
   };
 }
 

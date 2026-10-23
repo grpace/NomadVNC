@@ -8,6 +8,7 @@ import {
   persistAppSettings,
   sanitizeAppSettings,
   type AppSettings,
+  type SessionLayout,
 } from "./appSettings";
 import type { Collection, PeerDevice, SavedMachine, TailnetState } from "@nomadvnc/domain";
 import { isManualMachine, manualStableId, resolveMachineHost } from "@nomadvnc/domain";
@@ -15,14 +16,10 @@ import type {
   NomadNativeEvent,
   NomadNativePlatform,
   NativeFrameConfig,
-  PeerPathInfo,
   SecureStorageStatus,
   SidecarStatus,
   WindowState,
 } from "@nomadvnc/platform-contracts";
-import { createViewerHtml } from "@nomadvnc/viewer-shell";
-import viewerBootstrapUrl from "@nomadvnc/viewer-shell/bootstrap?url";
-import viewerInputUrl from "@nomadvnc/viewer-shell/input?url";
 import { AccountClient, AccountApiError, createAccountFetch } from "./accountClient";
 import type { BackendSharedDeviceView, BackendShareView, ShareGrantInput } from "./accountClient";
 import { loadAccountConfig, persistAccountConfig } from "./accountConfig";
@@ -68,8 +65,7 @@ import {
   setMachineViewPrefs,
   type MachineViewPrefsMap,
 } from "./machineViewPrefs";
-import { formatLastSeenSuffix, getMachinePresence } from "./presence";
-import { AUTO_RECONNECT_MAX_ATTEMPTS, SessionReconnectController } from "./sessionReconnect";
+import { formatLastSeenSuffix } from "./presence";
 import { AccountPanel } from "./components/AccountPanel";
 import { ShareDialog } from "./components/ShareDialog";
 import { SidebarHeader } from "./components/SidebarHeader";
@@ -78,7 +74,8 @@ import { QuickConnect } from "./components/QuickConnect";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { PasswordPromptModal } from "./components/PasswordPromptModal";
 import { StatusToast } from "./components/StatusToast";
-import { ViewerPanel, type ViewerConnectionState } from "./components/ViewerPanel";
+import { SessionView, type ActiveSession, type SessionLiveState } from "./components/SessionView";
+import { SessionStrip } from "./components/SessionStrip";
 import { ViewerPlaceholder } from "./components/ViewerPlaceholder";
 
 declare global {
@@ -90,18 +87,10 @@ declare global {
 type SidebarTab = "machines" | "form" | "account" | "settings";
 type StatusVariant = "info" | "success" | "error" | "connecting" | "disconnecting";
 
-interface ActiveSession {
-  sessionId: string;
-  wsUrl: string;
-  password?: string;
-  /** Passed to noVNC for macOS ARD; optional for standard VNC password–only servers. */
-  vncUsername?: string;
-  machineId?: string;
-  label: string;
-  host: string;
-  port: number;
-  /** True when the session targets a user-typed address (local-first path). */
-  direct: boolean;
+/** One open session. `id` stays put while reconnects swap the proxy session. */
+interface SessionSlot {
+  id: string;
+  session: ActiveSession;
 }
 
 interface StatusState {
@@ -153,9 +142,10 @@ export function App() {
   const [savedMachines, setSavedMachines] = useState<SavedMachine[]>(() => loadSavedMachines());
   const [collections, setCollections] = useState<Collection[]>(() => loadCollections());
   const [machineViewPrefs, setMachineViewPrefsState] = useState<MachineViewPrefsMap>(() => loadMachineViewPrefs());
-  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
-  const [connectingMachineId, setConnectingMachineId] = useState<string | null>(null);
-  const [viewerHtml, setViewerHtml] = useState("");
+  const [slots, setSlots] = useState<SessionSlot[]>([]);
+  const [focusedSlotId, setFocusedSlotId] = useState<string | null>(null);
+  const [slotStates, setSlotStates] = useState<Record<string, SessionLiveState>>({});
+  const [connectingMachineIds, setConnectingMachineIds] = useState<string[]>([]);
 
   // --- Nomad account (optional; local mode works without it) ---
   const [accountSession, setAccountSession] = useState<AccountSession | null>(null);
@@ -545,43 +535,27 @@ export function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [viewerConnectionLost, setViewerConnectionLost] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  /** True once the viewer finished the RFB handshake; false while (re)connecting. */
-  const [viewerLive, setViewerLive] = useState(false);
-  /**
-   * Whether the current session ever completed a handshake. A failure
-   * before that is "couldn't connect" (wrong port, server not running):
-   * reported at once instead of five "connection lost" retries.
-   */
-  const sessionEverLiveRef = useRef(false);
-  const [viewerNeverConnected, setViewerNeverConnected] = useState(false);
-  const [sessionKey, setSessionKey] = useState(0);
-  /** Proxy session replaced by a reconnect, stopped after the new viewer mounts. */
-  const supersededSessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const superseded = supersededSessionIdRef.current;
-    if (!superseded) {
-      return;
-    }
-    supersededSessionIdRef.current = null;
-    void Promise.resolve().then(() => window.nomadNative.stopVncSession(superseded)).catch(() => {
-      // The old proxy session is already dead; cleanup is best-effort.
-    });
-  }, [sessionKey]);
-  const activeSessionIdRef = useRef<string | null>(null);
-  const activeSessionRef = useRef<ActiveSession | null>(null);
+  const slotsRef = useRef<SessionSlot[]>([]);
   const peersRef = useRef<PeerDevice[]>([]);
   const savedMachinesRef = useRef<SavedMachine[]>([]);
   const collectionsRef = useRef<Collection[]>([]);
   const tailnetStateRef = useRef<TailnetState | null>(null);
   const passwordModalResolveRef = useRef<((value: string | null) => void) | null>(null);
   const [passwordModal, setPasswordModal] = useState<null | { title: string; body: string; submitLabel?: string }>(null);
+  /** Prompts wait their turn: several sessions can ask at once. */
+  const passwordPromptQueueRef = useRef<Array<() => void>>([]);
 
   const requestPasswordPrompt = useCallback((title: string, body: string, submitLabel?: string): Promise<string | null> => {
     return new Promise((resolve) => {
-      passwordModalResolveRef.current = resolve;
-      setPasswordModal({ title, body, submitLabel });
+      const show = (): void => {
+        passwordModalResolveRef.current = resolve;
+        setPasswordModal({ title, body, submitLabel });
+      };
+      if (passwordModalResolveRef.current) {
+        passwordPromptQueueRef.current.push(show);
+      } else {
+        show();
+      }
     });
   }, []);
 
@@ -590,12 +564,17 @@ export function App() {
     passwordModalResolveRef.current = null;
     setPasswordModal(null);
     resolve?.(value);
+    passwordPromptQueueRef.current.shift()?.();
   }, []);
 
   useEffect(() => {
-    activeSessionIdRef.current = activeSession?.sessionId ?? null;
-    activeSessionRef.current = activeSession;
-  }, [activeSession]);
+    slotsRef.current = slots;
+  }, [slots]);
+
+  /** The session the sidebar and keyboard belong to. */
+  const focusedSlot = slots.find((slot) => slot.id === focusedSlotId) ?? slots[slots.length - 1];
+  const activeSession = focusedSlot?.session ?? null;
+  const hasSessions = slots.length > 0;
 
   useEffect(() => {
     peersRef.current = peers;
@@ -644,12 +623,12 @@ export function App() {
     });
   }, [refreshSecureStorageStatus]);
 
-  // Auto-expand sidebar when session ends
+  // Auto-expand sidebar when the last session ends
   useEffect(() => {
-    if (!activeSession && sidebarCollapsed) {
+    if (!hasSessions && sidebarCollapsed) {
       setSidebarCollapsed(false);
     }
-  }, [activeSession, sidebarCollapsed]);
+  }, [hasSessions, sidebarCollapsed]);
 
   // --- Persist saved machines ---
   useEffect(() => {
@@ -665,62 +644,6 @@ export function App() {
   useEffect(() => {
     persistCollections(collections);
   }, [collections]);
-
-  // --- Tailnet path health for the live session ---
-  const [connectionPath, setConnectionPath] = useState<PeerPathInfo | null | undefined>(undefined);
-  /** Re-samples the path now (the viewer says the session stopped answering). */
-  const resampleConnectionPathRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    if (!activeSession) {
-      setConnectionPath(undefined);
-      return;
-    }
-    // Direct (address) sessions don't ride the tailnet: a path verdict
-    // would be meaningless ("No path"), so the chip stays hidden.
-    if (activeSession.direct) {
-      setConnectionPath(null);
-      return;
-    }
-    const host = activeSession.host;
-    let cancelled = false;
-
-    async function refreshPath(): Promise<void> {
-      try {
-        if (typeof window.nomadNative.getPeerPath !== "function") {
-          if (!cancelled) {
-            setConnectionPath(null);
-          }
-          return;
-        }
-        const info = await window.nomadNative.getPeerPath(host);
-        if (!cancelled) {
-          setConnectionPath(info);
-        }
-      } catch {
-        // Diagnostics are advisory; a failed sample hides the chip.
-        if (!cancelled) {
-          setConnectionPath(null);
-        }
-      }
-    }
-
-    setConnectionPath(undefined);
-    void refreshPath();
-    resampleConnectionPathRef.current = () => {
-      // "Checking…" until the fresh sample lands, so a stale verdict
-      // doesn't explain the stall.
-      setConnectionPath(undefined);
-      void refreshPath();
-    };
-    const timer = window.setInterval(() => {
-      void refreshPath();
-    }, 15000);
-    return () => {
-      cancelled = true;
-      resampleConnectionPathRef.current = () => {};
-      window.clearInterval(timer);
-    };
-  }, [activeSession]);
 
   // --- Fullscreen management ---
   async function handleToggleFullscreen(): Promise<void> {
@@ -783,13 +706,13 @@ export function App() {
 
   // In the stacked layout the sidebar sits above the viewer and would
   // leave the remote desktop a sliver, so a new session collapses it.
-  const activeSessionId = activeSession?.sessionId;
+  const sessionCount = slots.length;
   useEffect(() => {
-    if (activeSessionId && isVertical) {
+    if (sessionCount > 0 && isVertical) {
       setSidebarCollapsed(true);
     }
     // Only on session start, not on every orientation change.
-  }, [activeSessionId]);
+  }, [sessionCount]);
   // --- Auto-dismiss status toasts ---
   useEffect(() => {
     if (status.message !== "Idle" && status.variant !== "connecting") {
@@ -891,10 +814,14 @@ export function App() {
     await refreshSidecarStatus();
   }
 
+  function disconnectFirstPrefix(): string {
+    return slots.length > 1 ? "Disconnect all sessions" : "Disconnect the current session";
+  }
+
   /** Tailnet sign-out (switch-account path). Refuses while a session is live. */
   async function handleSignOut(): Promise<void> {
-    if (activeSession) {
-      setStatus({ message: "Disconnect the current session before signing out", variant: "error" });
+    if (hasSessions) {
+      setStatus({ message: `${disconnectFirstPrefix()} before signing out`, variant: "error" });
       return;
     }
     try {
@@ -917,8 +844,8 @@ export function App() {
 
   /** Re-authenticate the tailnet node (key expiring or expired). */
   async function handleReauthenticate(): Promise<void> {
-    if (activeSession) {
-      setStatus({ message: "Disconnect the current session before re-authenticating", variant: "error" });
+    if (hasSessions) {
+      setStatus({ message: `${disconnectFirstPrefix()} before re-authenticating`, variant: "error" });
       return;
     }
     try {
@@ -943,8 +870,8 @@ export function App() {
    * session is live, mirroring sign-out.
    */
   async function handleResetIdentity(): Promise<void> {
-    if (activeSession) {
-      setStatus({ message: "Disconnect the current session before resetting the tailnet identity", variant: "error" });
+    if (hasSessions) {
+      setStatus({ message: `${disconnectFirstPrefix()} before resetting the tailnet identity`, variant: "error" });
       return;
     }
     try {
@@ -1058,13 +985,9 @@ export function App() {
           return;
         }
 
-        if (event.state === "disconnecting") {
-          if (activeSessionIdRef.current === null) {
-            return;
-          }
-          if (event.sessionId !== activeSessionIdRef.current) {
-            return;
-          }
+        if (event.state === "disconnecting"
+          && !slotsRef.current.some((slot) => slot.session.sessionId === event.sessionId)) {
+          return;
         }
 
         const variant: StatusVariant =
@@ -1158,7 +1081,6 @@ export function App() {
 
     return () => {
       window.clearInterval(interval);
-      autoReconnectRef.current?.stop();
       unsubscribe();
       unsubscribeAuthCallback?.();
       unsubscribeOpenSettings?.();
@@ -1535,111 +1457,84 @@ export function App() {
   }
 
   // --- Session management ---
-  // Automatic reconnection for transient drops (network flap, VNC server
-  // restart). The controller's callbacks only touch refs and state setters,
-  // so the lazily created instance stays valid for the component's lifetime.
-  const reconnectInFlightRef = useRef(false);
-  const autoReconnectRef = useRef<SessionReconnectController | null>(null);
-  if (!autoReconnectRef.current) {
-    autoReconnectRef.current = new SessionReconnectController({
-      attempt: () => runReconnectAttempt(),
-      onExhausted: () => {
-        // Retry budget spent: surface the manual "Connection lost" overlay
-        // with an honest diagnosis (peer offline vs. VNC server dead).
-        const session = activeSessionRef.current;
-        const machine = session?.machineId
-          ? savedMachinesRef.current.find((entry) => entry.id === session.machineId)
-          : undefined;
-        const presence = machine ? getMachinePresence(machine, peersRef.current) : undefined;
-        const target = session ? `${session.host}:${session.port}` : null;
-        setViewerConnectionLost(true);
-        if (machine && presence?.kind === "offline") {
-          const suffix = formatLastSeenSuffix(presence.peer?.lastSeen);
-          setStatus({
-            message: `Couldn't reconnect to "${machine.label}". It looks offline now${suffix ? ` (${suffix})` : ""}. Reconnect to retry.`,
-            variant: "error",
-          });
-        } else if (machine && target) {
-          setStatus({
-            message: `Couldn't reconnect to "${machine.label}" after ${AUTO_RECONNECT_MAX_ATTEMPTS} tries. Its VNC server at ${target} may have stopped. Reconnect to retry.`,
-            variant: "error",
-          });
-        } else if (target) {
-          setStatus({
-            message: `Couldn't reconnect to ${target} after ${AUTO_RECONNECT_MAX_ATTEMPTS} tries. The VNC server may have stopped. Reconnect to retry.`,
-            variant: "error",
-          });
-        } else {
-          setStatus({ message: "Couldn't reconnect. Reconnect to retry.", variant: "error" });
-        }
-      },
-      onAttemptScheduled: (attempt) => {
-        // Keep the manual overlay hidden while retries are in flight; the
-        // status line carries the progress.
-        setViewerConnectionLost(false);
-        setStatus({
-          message: `Connection lost. Retrying (${attempt}/${AUTO_RECONNECT_MAX_ATTEMPTS})…`,
-          variant: "connecting",
-        });
-      },
-      onNetworkOffline: () => {
-        // The OS network dropped: pause retries without burning the budget.
-        // The loop resumes with a fresh budget when the network returns.
-        setViewerConnectionLost(false);
-        setStatus({
-          message: "You're offline. Retrying when the network returns…",
-          variant: "connecting",
-        });
-      },
-    });
+  // Each open session is a slot; SessionView owns its reconnect loop,
+  // password recovery, and path sampling. App keeps the list, the focus,
+  // and the layout.
+  const sessionLayout: SessionLayout = appSettings.sessionLayout;
+
+  function updateSlots(next: SessionSlot[]): void {
+    slotsRef.current = next;
+    setSlots(next);
   }
 
-  // Pause/resume the retry loop with the OS network. This catches the common
-  // "tailnet path died" case (wifi drop, sleep/wake) that tsnet's own
-  // logged-in state can't report: tsnet stays "Running" while the path is
-  // down, and retries would otherwise burn the budget blaming the VNC server.
-  useEffect(() => {
-    const handleOffline = (): void => {
-      autoReconnectRef.current?.noteNetworkOffline();
-    };
-    const handleOnline = (): void => {
-      autoReconnectRef.current?.noteNetworkOnline();
-    };
-    window.addEventListener("offline", handleOffline);
-    window.addEventListener("online", handleOnline);
-    return () => {
-      window.removeEventListener("offline", handleOffline);
-      window.removeEventListener("online", handleOnline);
-    };
+  const handleSessionChange = useCallback((slotId: string, session: ActiveSession): void => {
+    const next = slotsRef.current.map((slot) => (slot.id === slotId ? { ...slot, session } : slot));
+    slotsRef.current = next;
+    setSlots(next);
   }, []);
 
-  async function disconnectSession(nextMessage = "Session closed"): Promise<void> {
-    autoReconnectRef.current?.stop();
-    if (!activeSession) {
+  const handleSlotLiveState = useCallback((slotId: string, state: SessionLiveState): void => {
+    setSlotStates((current) => (current[slotId] === state ? current : { ...current, [slotId]: state }));
+  }, []);
+
+  function focusSlot(slotId: string): void {
+    setFocusedSlotId(slotId);
+  }
+
+  // A click inside a viewer lands in its iframe, which the page never
+  // sees as a pointer event; the page only loses focus to that iframe.
+  useEffect(() => {
+    if (slots.length < 2) {
       return;
     }
+    const handleBlur = (): void => {
+      window.setTimeout(() => {
+        const tile = document.activeElement?.closest<HTMLElement>("[data-slot-id]");
+        const slotId = tile?.dataset.slotId;
+        if (slotId) {
+          setFocusedSlotId(slotId);
+        }
+      }, 0);
+    };
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, [slots.length]);
 
-    const sessionId = activeSession.sessionId;
-    activeSessionIdRef.current = null;
-    setActiveSession(null);
-    setViewerHtml("");
-    setViewerConnectionLost(false);
-    setIsReconnecting(false);
-    setSessionHint("Session ended. Choose another machine or reconnect.");
+  /** Ends one session: drops its slot and stops its proxy. */
+  async function closeSession(slotId: string, nextMessage = "Session closed"): Promise<void> {
+    const slot = slotsRef.current.find((entry) => entry.id === slotId);
+    if (!slot) {
+      return;
+    }
+    const remaining = slotsRef.current.filter((entry) => entry.id !== slotId);
+    updateSlots(remaining);
+    setSlotStates((current) => {
+      const { [slotId]: _removed, ...rest } = current;
+      return rest;
+    });
+    if (focusedSlotId === slotId || !remaining.some((entry) => entry.id === focusedSlotId)) {
+      setFocusedSlotId(remaining[remaining.length - 1]?.id ?? null);
+    }
 
-    // A fullscreen window with no session is a dead end — drop out of
-    // fullscreen so the sidebar and window chrome come back.
-    try {
-      if (await window.nomadNative.getFullscreen()) {
-        await window.nomadNative.toggleFullscreen();
+    if (remaining.length === 0) {
+      setSessionHint("Session ended. Choose another machine or reconnect.");
+      // A fullscreen window with no session is a dead end — drop out of
+      // fullscreen so the sidebar and window chrome come back.
+      try {
+        if (await window.nomadNative.getFullscreen()) {
+          await window.nomadNative.toggleFullscreen();
+        }
+      } catch {
+        // fullscreen exit is best-effort
       }
-    } catch {
-      // fullscreen exit is best-effort
     }
 
     try {
-      await window.nomadNative.stopVncSession(sessionId);
-      setStatus({ message: nextMessage, variant: "info" });
+      await window.nomadNative.stopVncSession(slot.session.sessionId);
+      setStatus({
+        message: remaining.length > 0 && nextMessage === "Session closed" ? `Disconnected from ${slot.session.label}` : nextMessage,
+        variant: "info",
+      });
     } catch (error) {
       setStatus({
         message: error instanceof Error ? error.message : "Unable to stop VNC session",
@@ -1648,229 +1543,36 @@ export function App() {
     }
   }
 
-  const handleViewerState = useCallback((state: ViewerConnectionState): void => {
-    if (state === "connected") {
-      // A completed RFB handshake means the session is healthy: the retry
-      // loop (if any) is done and its budget resets.
-      autoReconnectRef.current?.noteConnected();
-      setViewerConnectionLost(false);
-      setViewerLive(true);
-      sessionEverLiveRef.current = true;
-      setViewerNeverConnected(false);
-      // "Retrying (1/5)…" and "Reconnecting to …" are over once the viewer
-      // is connected; left alone they would sit there for the whole session.
-      setStatus((current) => (current.variant === "connecting" ? { message: "Idle", variant: "info" } : current));
-      void authRecoveryRef.current.onConnected();
-      return;
-    }
-    setViewerLive(false);
-    if (state === "authFailed") {
-      // Retrying a rejected password can't succeed (and gets clients
-      // blacklisted by many servers): stop the loop and ask instead.
-      autoReconnectRef.current?.stop();
-      void authRecoveryRef.current.onAuthFailed();
-      return;
-    }
-    if (state === "disconnected" && activeSessionIdRef.current !== null) {
-      // The TCP dial to the VNC target happens lazily when noVNC connects,
-      // so a drop here means either the host went away or its VNC server did.
-      const session = activeSessionRef.current;
-      const machine = session?.machineId
-        ? savedMachinesRef.current.find((entry) => entry.id === session.machineId)
-        : undefined;
-      const presence = machine ? getMachinePresence(machine, peersRef.current) : undefined;
-      if (machine && presence?.kind === "offline") {
-        // The peer is gone: retrying is pointless, go straight to manual.
-        autoReconnectRef.current?.stop();
-        const suffix = formatLastSeenSuffix(presence.peer?.lastSeen);
-        setViewerConnectionLost(true);
-        setStatus({
-          message: `Connection to "${machine.label}" lost. It looks offline now${suffix ? ` (${suffix})` : ""}.`,
-          variant: "error",
-        });
-        return;
-      }
-      if (!sessionEverLiveRef.current && session) {
-        // Never got through: retrying the same address won't help, so say
-        // what's wrong right away and let the user retry when ready.
-        autoReconnectRef.current?.stop();
-        setViewerNeverConnected(true);
-        setViewerConnectionLost(true);
-        setStatus({
-          message: `Couldn't connect to ${session.label}`,
-          variant: "error",
-        });
-        return;
-      }
-      // Transient-looking drop: retry with backoff. The manual "Connection
-      // lost" overlay only appears if the retry budget is exhausted. Each
-      // viewer-level failure counts against the same budget — only a
-      // successful "connected" resets it.
-      autoReconnectRef.current?.noteDisconnected();
-    }
-  }, []);
-
-  /**
-   * Wrong-password recovery. The server rejected the password: ask for a
-   * new one and reconnect with it; cancelling ends the session. When the new
-   * password gets through and the machine keeps its password in the local
-   * keyring, the saved copy is updated so the next connect just works.
-   * Held in a ref because the viewer-state callback is memoized once.
-   */
-  const pendingPasswordUpdateRef = useRef<{ machineId: string; password: string } | null>(null);
-  const authRecoveryRef = useRef({ onAuthFailed: async () => {}, onConnected: async () => {} });
-  authRecoveryRef.current = {
-    onAuthFailed: async () => {
-      const session = activeSessionRef.current;
-      if (!session) {
-        return;
-      }
-      pendingPasswordUpdateRef.current = null;
-      setStatus({ message: `"${session.label}" rejected the password`, variant: "error" });
-      const entered = await requestPasswordPrompt(
-        "Wrong Password",
-        `"${session.label}" didn't accept that password. Enter it again to reconnect.`,
-        "Reconnect",
-      );
-      if (entered === null || activeSessionIdRef.current !== session.sessionId) {
-        if (activeSessionIdRef.current === session.sessionId) {
-          await disconnectSession();
-        }
-        return;
-      }
-      const updated: ActiveSession = { ...session, password: entered || undefined };
-      activeSessionRef.current = updated;
-      setActiveSession(updated);
-      if (session.machineId && entered) {
-        pendingPasswordUpdateRef.current = { machineId: session.machineId, password: entered };
-      }
-      setStatus({ message: `Reconnecting to ${session.label}...`, variant: "connecting" });
-      try {
-        await runReconnectAttempt();
-      } catch (error) {
-        setStatus({
-          message: error instanceof Error ? error.message : "Unable to reconnect the VNC session",
-          variant: "error",
-        });
-      }
-    },
-    onConnected: async () => {
-      const pending = pendingPasswordUpdateRef.current;
-      pendingPasswordUpdateRef.current = null;
-      if (!pending) {
-        return;
-      }
-      const machine = savedMachinesRef.current.find((entry) => entry.id === pending.machineId);
-      if (machine?.credentialMode === "localSecure") {
-        try {
-          await window.nomadNative.setMachinePassword(machine.id, pending.password);
-          setStatus({ message: `Updated the saved password for ${machine.label}`, variant: "success" });
-        } catch {
-          setStatus({
-            message: `Connected, but couldn't update the saved password for ${machine.label}. Edit the machine to save it.`,
-            variant: "error",
-          });
-        }
-      } else if (machine?.credentialMode === "cloudSecure") {
-        setStatus({
-          message: `Connected. Edit ${machine.label} and save to update its synced password.`,
-          variant: "info",
-        });
-      }
-    },
-  };
-
-  /**
-   * Make-before-break reconnect: start the replacement proxy session first so
-   * a failed attempt keeps the (dead) session object intact for another retry.
-   * Throws on failure; callers decide whether to retry or surface the error.
-   */
-  async function runReconnectAttempt(): Promise<void> {
-    const previous = activeSessionRef.current;
-    if (!previous || reconnectInFlightRef.current) {
-      throw new Error("No session to reconnect");
-    }
-
-    reconnectInFlightRef.current = true;
-    setIsReconnecting(true);
-    try {
-      const session = await window.nomadNative.startVncSession({
-        host: previous.host,
-        port: previous.port,
-        sessionToken: crypto.randomUUID(),
-        direct: previous.direct,
-      });
-
-      if (activeSessionIdRef.current === null) {
-        // The user disconnected while we were dialing: drop the replacement
-        // instead of resurrecting the session.
-        try {
-          await window.nomadNative.stopVncSession(session.sessionId);
-        } catch {
-          // Best-effort cleanup.
-        }
-        return;
-      }
-
-      // Stopped once the new viewer has mounted (effect on sessionKey). Stopping
-      // it now would let the old, still-mounted viewer report "disconnected"
-      // and start the auto-retry loop for a session that is being replaced.
-      supersededSessionIdRef.current = previous.sessionId;
-
-      if (previous.machineId) {
-        setSavedMachines((current) => touchSavedMachineConnection(current, previous.machineId as string));
-      }
-
-      const next: ActiveSession = {
-        ...previous,
-        sessionId: session.sessionId,
-        wsUrl: session.wsUrl,
-      };
-      activeSessionIdRef.current = next.sessionId;
-      setActiveSession(next);
-      setViewerHtml(
-        createViewerHtml({
-          wsUrl: session.wsUrl,
-          password: previous.password,
-          username: previous.vncUsername,
-          bootstrapModuleUrl: new URL("./vendor/novnc/core/rfb.js", window.location.href).toString(),
-          bootstrapScriptUrl: new URL(viewerBootstrapUrl, window.location.href).toString(),
-          inputModuleUrl: new URL(viewerInputUrl, window.location.href).toString(),
-          desktop: true,
-          fitToScreen: true,
-        }),
-      );
-      // Force the iframe to remount even when the proxy URL is unchanged.
-      setSessionKey((key) => key + 1);
-    } finally {
-      reconnectInFlightRef.current = false;
-      setIsReconnecting(false);
-    }
+  function setSessionLayout(layout: SessionLayout): void {
+    updateAppSettings({ sessionLayout: layout });
   }
 
-  /** One-click reconnect: establish a fresh proxy session with the same parameters. */
-  async function reconnectSession(): Promise<void> {
-    autoReconnectRef.current?.stop();
-    const previous = activeSessionRef.current;
-    if (!previous || reconnectInFlightRef.current) {
+  /**
+   * Opens every machine in a group that isn't open yet, one after another
+   * (password prompts come one at a time), and shows them side by side.
+   */
+  async function connectGroup(collection: Collection): Promise<void> {
+    const members = savedMachines.filter((machine) => machine.collectionId === collection.id);
+    if (members.length === 0) {
       return;
     }
-
-    setStatus({ message: `Reconnecting to ${previous.label}...`, variant: "connecting" });
-    try {
-      await runReconnectAttempt();
-    } catch (error) {
-      setStatus({
-        message: error instanceof Error ? error.message : "Unable to reconnect the VNC session",
-        variant: "error",
-      });
+    setSessionLayout("grid");
+    for (const machine of members) {
+      if (slotsRef.current.some((slot) => slot.session.machineId === machine.id)) {
+        continue;
+      }
+      await connect(machine);
     }
   }
 
   async function connect(machineOverride?: SavedMachine): Promise<void> {
-    if (activeSession) {
-      setStatus({ message: "Disconnect the current session before starting another one", variant: "error" });
-      return;
+    // An open machine is one click away: show it instead of opening it twice.
+    if (machineOverride) {
+      const open = slotsRef.current.find((slot) => slot.session.machineId === machineOverride.id);
+      if (open) {
+        focusSlot(open.id);
+        return;
+      }
     }
 
     const fallbackMachine = selectedPeer
@@ -1959,7 +1661,10 @@ export function App() {
     const label = (targetMachine?.label ?? machineLabel.trim()) || selectedPeer?.displayName || host;
 
     setStatus({ message: `Connecting to ${label}...`, variant: "connecting" });
-    setConnectingMachineId(targetMachine?.id ?? null);
+    const connectingId = targetMachine?.id;
+    if (connectingId) {
+      setConnectingMachineIds((current) => [...current, connectingId]);
+    }
     setSessionHint(`Launching a direct VNC session to ${label}.`);
 
     try {
@@ -1978,36 +1683,22 @@ export function App() {
         setSavedMachines((current) => touchSavedMachineConnection(current, targetMachine.id));
       }
 
-      activeSessionIdRef.current = session.sessionId;
-      sessionEverLiveRef.current = false;
-      setViewerNeverConnected(false);
-      setViewerLive(false);
-      setActiveSession({
-        sessionId: session.sessionId,
-        wsUrl: session.wsUrl,
-        password: sessionPassword || undefined,
-        vncUsername: sessionVncUsername,
-        machineId: targetMachine?.id,
-        label,
-        host,
-        port: portNumber,
-        direct: directDial,
-      });
-      setViewerHtml(
-        createViewerHtml({
+      const slot: SessionSlot = {
+        id: session.sessionId,
+        session: {
+          sessionId: session.sessionId,
           wsUrl: session.wsUrl,
           password: sessionPassword || undefined,
-          username: sessionVncUsername,
-          bootstrapModuleUrl: new URL("./vendor/novnc/core/rfb.js", window.location.href).toString(),
-          bootstrapScriptUrl: new URL(viewerBootstrapUrl, window.location.href).toString(),
-          inputModuleUrl: new URL(viewerInputUrl, window.location.href).toString(),
-          desktop: true,
-          fitToScreen: true,
-        }),
-      );
-      setViewerConnectionLost(false);
-      setIsReconnecting(false);
-      setSessionKey((key) => key + 1);
+          vncUsername: sessionVncUsername,
+          machineId: targetMachine?.id,
+          label,
+          host,
+          port: portNumber,
+          direct: directDial,
+        },
+      };
+      updateSlots([...slotsRef.current, slot]);
+      setFocusedSlotId(slot.id);
       setStatus({ message: "Idle", variant: "info" });
     } catch (error) {
       // startVncSession only brings up the localhost proxy — the VNC dial
@@ -2021,12 +1712,14 @@ export function App() {
         variant: "error",
       });
     } finally {
-      setConnectingMachineId(null);
+      if (connectingId) {
+        setConnectingMachineIds((current) => current.filter((id) => id !== connectingId));
+      }
     }
   }
 
   // --- Render ---
-  const showSidebar = !isFullscreen || !activeSession;
+  const showSidebar = !isFullscreen || !hasSessions;
 
   // Signed-out pending uploads: a returning account user with local machines
   // that haven't been uploaded for their email yet.
@@ -2042,7 +1735,7 @@ export function App() {
   // Settings and Account read best full-width: with no live session they
   // open in the main pane (the sidebar keeps the machine list). During a
   // session they stay in the sidebar so the remote desktop isn't replaced.
-  const panelInMain = !activeSession && (sidebarTab === "account" || sidebarTab === "settings");
+  const panelInMain = !hasSessions && (sidebarTab === "account" || sidebarTab === "settings");
   const accountPanel = (
     <AccountPanel
       session={accountSession}
@@ -2086,11 +1779,12 @@ export function App() {
     <QuickConnect
       machines={savedMachines}
       peers={peers}
-      activeMachineId={activeSession?.machineId}
-      connectingMachineId={connectingMachineId ?? undefined}
+      activeMachineIds={slots.flatMap((slot) => (slot.session.machineId ? [slot.session.machineId] : []))}
+      connectingMachineIds={connectingMachineIds}
       collections={collections}
       sharedDevices={sharedDevices}
       onConnect={(machine) => void connect(machine)}
+      onConnectGroup={(collection) => void connectGroup(collection)}
       onEdit={handleEditMachine}
       onDelete={handleDeleteMachine}
       onShare={(machine) => void openShareDialog(machine)}
@@ -2103,6 +1797,101 @@ export function App() {
       onDeleteCollection={handleDeleteCollection}
     />
   );
+
+  /** Sidebar status: the one session, or how many of several are live. */
+  const sidebarSession = ((): { label?: string; state: SessionLiveState } => {
+    if (slots.length <= 1) {
+      return {
+        label: activeSession?.label,
+        state: focusedSlot ? slotStates[focusedSlot.id] ?? "connecting" : "connecting",
+      };
+    }
+    const states = slots.map((slot) => slotStates[slot.id] ?? "connecting");
+    const live = states.filter((state) => state === "live").length;
+    if (live > 0) {
+      return { label: live === slots.length ? `${slots.length} computers` : `${live} of ${slots.length} computers`, state: "live" };
+    }
+    return { label: `${slots.length} computers`, state: states.includes("connecting") ? "connecting" : "down" };
+  })();
+
+  function renderSessions(): ReactNode {
+    const multi = slots.length > 1;
+    const grid = multi && sessionLayout === "grid";
+    const focusedId = focusedSlot?.id ?? null;
+    const columns = Math.ceil(Math.sqrt(slots.length));
+    return (
+      <div className={`sessions ${isFullscreen ? "sessions--fullscreen" : ""}`}>
+        {multi && (
+          <SessionStrip
+            sessions={slots.map((slot) => ({
+              id: slot.id,
+              label: slot.session.label,
+              state: slotStates[slot.id] ?? "connecting",
+            }))}
+            focusedId={focusedId}
+            layout={sessionLayout}
+            isFullscreen={isFullscreen}
+            onFocus={focusSlot}
+            onClose={(id) => void closeSession(id)}
+            onLayoutChange={setSessionLayout}
+            onExitFullscreen={() => void handleToggleFullscreen()}
+          />
+        )}
+        <div
+          className={grid ? "session-grid" : "session-stack"}
+          style={grid ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+        >
+          {slots.map((slot) => {
+            const focused = slot.id === focusedId;
+            const hidden = !grid && !focused;
+            return (
+              <div
+                key={slot.id}
+                className={`session-tile ${focused ? "session-tile--focused" : ""} ${hidden ? "session-tile--hidden" : ""}`}
+                aria-hidden={hidden || undefined}
+                data-session-label={slot.session.label}
+                data-slot-id={slot.id}
+                onFocusCapture={() => focusSlot(slot.id)}
+                onPointerDownCapture={() => focusSlot(slot.id)}
+              >
+                <SessionView
+                  slotId={slot.id}
+                  session={slot.session}
+                  multiSession={multi}
+                  isFocused={focused}
+                  compact={grid}
+                  isFullscreen={isFullscreen}
+                  machinesRef={savedMachinesRef}
+                  peersRef={peersRef}
+                  initialViewPrefs={getMachineViewPrefs(
+                    machineViewPrefs,
+                    slot.session.machineId,
+                    defaultViewPrefsFromSettings(appSettings),
+                  )}
+                  onViewPrefsChange={(machineId, prefs) =>
+                    setMachineViewPrefsState((current) => setMachineViewPrefs(current, machineId, prefs))}
+                  onSessionChange={handleSessionChange}
+                  onLiveStateChange={handleSlotLiveState}
+                  onClose={(id) => void closeSession(id)}
+                  onTouchMachine={(machineId) =>
+                    setSavedMachines((current) => touchSavedMachineConnection(current, machineId))}
+                  onStatus={(message, variant) => setStatus({ message, variant })}
+                  onConnectingDone={() =>
+                    setStatus((current) => (current.variant === "connecting" ? { message: "Idle", variant: "info" } : current))}
+                  requestPasswordPrompt={requestPasswordPrompt}
+                  onToggleFullscreen={() => void handleToggleFullscreen()}
+                  onExpand={grid ? () => {
+                    focusSlot(slot.id);
+                    setSessionLayout("tabs");
+                  } : undefined}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="window-shell">
@@ -2128,7 +1917,7 @@ export function App() {
           onClose={() => setSharingMachine(null)}
         />
       ) : null}
-      <main className={`shell ${isFullscreen && activeSession ? "shell--fullscreen" : ""} ${sidebarCollapsed ? "shell--sidebar-collapsed" : ""}`}>
+      <main className={`shell ${isFullscreen && hasSessions ? "shell--fullscreen" : ""} ${sidebarCollapsed ? "shell--sidebar-collapsed" : ""}`}>
         {!isFullscreen && nativeFrameAtBoot !== true && (
           <div className="viewer-topbar">
             <div className="viewer-topbar__meta" />
@@ -2165,7 +1954,7 @@ export function App() {
           </div>
         )}
 
-        {!sidebarCollapsed && activeSession && showSidebar && (
+        {!sidebarCollapsed && hasSessions && showSidebar && (
           <button
             className="btn-collapse-float"
             onClick={() => setSidebarCollapsed(true)}
@@ -2200,8 +1989,8 @@ export function App() {
                 <SidebarHeader
                   tailnetState={tailnetState}
                   isRefreshing={isRefreshing}
-                  activeSessionLabel={activeSession?.label}
-                  sessionState={viewerLive ? "live" : viewerConnectionLost ? "down" : "connecting"}
+                  activeSessionLabel={sidebarSession.label}
+                  sessionState={sidebarSession.state}
                   onSignOut={() => void handleSignOut()}
                   onResetIdentity={() => void handleResetIdentity()}
                 />
@@ -2314,58 +2103,16 @@ export function App() {
           </section>
         )}
 
-        <section className={`viewer ${isFullscreen && activeSession ? "viewer--fullscreen" : ""}`}>
-          <div className={`viewer-body ${isFullscreen && activeSession ? "viewer-body--fullscreen" : ""}`}>
+        <section className={`viewer ${isFullscreen && hasSessions ? "viewer--fullscreen" : ""}`}>
+          <div className={`viewer-body ${isFullscreen && hasSessions ? "viewer-body--fullscreen" : ""}`}>
             {panelInMain ? (
               <div className="main-panel">
                 <div className="main-panel__inner">
                   {sidebarTab === "account" ? accountPanel : settingsPanel}
                 </div>
               </div>
-            ) : activeSession ? (
-              <ViewerPanel
-                session={activeSession}
-                viewerHtml={viewerHtml}
-                isFullscreen={isFullscreen}
-                sessionKey={sessionKey}
-                connectionLost={viewerConnectionLost}
-                neverConnected={viewerNeverConnected}
-                isReconnecting={isReconnecting}
-                viewPrefsKey={activeSession.machineId ?? activeSession.sessionId}
-                initialViewPrefs={getMachineViewPrefs(
-                  machineViewPrefs,
-                  activeSession.machineId,
-                  defaultViewPrefsFromSettings(appSettings),
-                )}
-                connectionPath={connectionPath}
-                onLinkStalled={() => resampleConnectionPathRef.current()}
-                onViewPrefsChange={(prefs) => {
-                  if (!activeSession.machineId) {
-                    return;
-                  }
-                  setMachineViewPrefsState((current) =>
-                    setMachineViewPrefs(current, activeSession.machineId as string, prefs),
-                  );
-                }}
-                onDisconnect={() => void disconnectSession()}
-                onReconnect={() => void reconnectSession()}
-                onViewerState={handleViewerState}
-                onCredentialsRequired={() =>
-                  setStatus({
-                    message:
-                      "Server asked for more credentials (often macOS Screen Sharing). Add your Mac account short name in VNC username, save the machine, and reconnect.",
-                    variant: "error",
-                  })
-                }
-                onToggleFullscreen={() => void handleToggleFullscreen()}
-                onRefocusViewer={() => {
-                  // Small delay to let toolbar close before refocusing the canvas
-                  setTimeout(() => {
-                    const iframe = document.querySelector<HTMLIFrameElement>(".viewer-surface iframe");
-                    iframe?.contentWindow?.postMessage({ type: "focus" }, "*");
-                  }, 100);
-                }}
-              />
+            ) : hasSessions ? (
+              renderSessions()
             ) : (
               <ViewerPlaceholder
                 tailnetState={tailnetState}

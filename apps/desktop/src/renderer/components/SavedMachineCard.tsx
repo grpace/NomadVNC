@@ -114,8 +114,13 @@ export function SavedMachineCard({ machine, peers, isActive, isConnecting, onCon
             <button className="btn btn--secondary btn--icon" onClick={handleDelete} title="Delete Machine">
               <TrashIcon />
             </button>
-            <button className="btn btn--primary btn--sm" onClick={() => onConnect(machine)} title="Connect" disabled={isActive || isConnecting}>
-              <PlayIcon style={{ width: 12, height: 12 }} /> {isActive ? "Connected" : isConnecting ? "Connecting" : "Connect"}
+            <button
+              className="btn btn--primary btn--sm"
+              onClick={() => onConnect(machine)}
+              title={isActive ? "Show This Session" : "Connect"}
+              disabled={isConnecting}
+            >
+              <PlayIcon style={{ width: 12, height: 12 }} /> {isActive ? "Show" : isConnecting ? "Connecting" : "Connect"}
             </button>
           </>
         )}

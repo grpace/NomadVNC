@@ -39,6 +39,26 @@ Text you copy on either side is available on the other (toggle it in
 **Session Settings**). Some servers — notably macOS Screen Sharing —
 don't support clipboard sync at all.
 
+### Several computers at once
+
+Connecting to another computer while one is open opens the new one
+beside it. With two or more open, a row of tabs sits above them:
+
+- **Show All Side by Side** (the grid button) tiles every screen in the
+  window. Each tile has its own name, status, **Show Alone**,
+  **Reconnect**, and **Disconnect**. Fullscreen tiles them edge to edge;
+  point at the bottom edge of the screen for the tabs.
+- **One at a Time** shows one session with the full toolbar. The others
+  stay connected; click a tab to switch.
+
+To open a whole group, pick it in the machine list's group filter and
+click **Connect All**. Computers that ask for a password ask one after
+another.
+
+Keys, **Capture keys**, and the clipboard follow the session you last
+clicked, which is outlined in the grid. Copy on one remote computer and
+paste on another. The × on a tab disconnects only that computer.
+
 ### Touchscreens
 
 Touchscreen laptops get the same gestures as the mobile app's Touch mode

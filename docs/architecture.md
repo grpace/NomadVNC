@@ -32,6 +32,12 @@ noVNC (in the app)  --ws://127.0.0.1:<port>/vnc?token=…-->  Go proxy  --TCP-->
    **Tailnet** sessions dial through the embedded Tailscale node.
 5. Disconnecting closes the proxy and both connections immediately.
 
+Each session has its own proxy, so the desktop app can keep several open
+at once. In the renderer, `App.tsx` holds the list of open sessions, which
+one has focus, and the tabs/grid layout. Each session is a `SessionView`
+with its own viewer, reconnect loop, password recovery and path checks.
+Only the focused viewer syncs the clipboard and holds the keyboard grab.
+
 VNC authentication happens between noVNC and the VNC server; the proxy
 never sees or stores the password.
 

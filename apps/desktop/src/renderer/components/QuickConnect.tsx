@@ -14,12 +14,15 @@ import { ServerIcon, ShareIcon } from "./icons";
 interface QuickConnectProps {
   machines: SavedMachine[];
   peers: PeerDevice[];
-  activeMachineId?: string;
-  connectingMachineId?: string;
+  /** Machines with an open session. */
+  activeMachineIds?: string[];
+  connectingMachineIds?: string[];
   collections?: Collection[];
   /** Devices shared with me (owner-side metadata only — connect lands later). */
   sharedDevices?: BackendSharedDeviceView[];
   onConnect: (machine: SavedMachine) => void;
+  /** Opens every machine in a group side by side. */
+  onConnectGroup?: (collection: Collection) => void;
   onEdit: (machine: SavedMachine) => void;
   onDelete: (machine: SavedMachine) => void;
   /** Provided for account machines while signed in; gates the card Share button. */
@@ -32,7 +35,7 @@ interface QuickConnectProps {
 /** Below this many saved machines, the list shows without search/filter controls. */
 const FILTER_CONTROLS_MIN_MACHINES = 3;
 
-export function QuickConnect({ machines, peers, activeMachineId, connectingMachineId, collections = [], sharedDevices = [], onConnect, onEdit, onDelete, onShare, isAccountMachine, onSwitchToForm, onDeleteCollection }: QuickConnectProps) {
+export function QuickConnect({ machines, peers, activeMachineIds = [], connectingMachineIds = [], collections = [], sharedDevices = [], onConnect, onConnectGroup, onEdit, onDelete, onShare, isAccountMachine, onSwitchToForm, onDeleteCollection }: QuickConnectProps) {
   const [search, setSearch] = useState(DEFAULT_MACHINE_LIST_QUERY.search);
   const [status, setStatus] = useState<MachineStatusFilter>(DEFAULT_MACHINE_LIST_QUERY.status);
   const [credential, setCredential] = useState<MachineCredentialFilter>(DEFAULT_MACHINE_LIST_QUERY.credential);
@@ -164,10 +167,19 @@ export function QuickConnect({ machines, peers, activeMachineId, connectingMachi
         )}
       </div>
 
-      {selectedCollection && onDeleteCollection && (
+      {selectedCollection && (onDeleteCollection || onConnectGroup) && (
         <div className="machine-group-bar">
           <span className="machine-group-bar__name">{selectedCollection.name}</span>
-          {confirmDeleteCollection ? (
+          {onConnectGroup && !confirmDeleteCollection && countFor(selectedCollection.id) > 0 && (
+            <button
+              className="btn btn--primary btn--sm"
+              onClick={() => onConnectGroup(selectedCollection)}
+              title="Connect to Every Machine in This Group and Show Them Side by Side"
+            >
+              Connect All
+            </button>
+          )}
+          {!onDeleteCollection ? null : confirmDeleteCollection ? (
             <span className="machine-group-bar__confirm">
               <button
                 className="btn btn--danger btn--sm"
@@ -211,8 +223,8 @@ export function QuickConnect({ machines, peers, activeMachineId, connectingMachi
               key={machine.id}
               machine={machine}
               peers={peers}
-              isActive={machine.id === activeMachineId}
-              isConnecting={machine.id === connectingMachineId}
+              isActive={activeMachineIds.includes(machine.id)}
+              isConnecting={connectingMachineIds.includes(machine.id)}
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}

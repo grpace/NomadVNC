@@ -29,6 +29,11 @@ describe("sanitizeAppSettings", () => {
     expect(sanitized.defaultScaleMode).toBe(DEFAULT_APP_SETTINGS.defaultScaleMode);
   });
 
+  it("keeps a known session layout and defaults the rest to grid", () => {
+    expect(sanitizeAppSettings({ sessionLayout: "tabs" }).sessionLayout).toBe("tabs");
+    expect(sanitizeAppSettings({ sessionLayout: "mosaic" }).sessionLayout).toBe("grid");
+  });
+
   it("accepts valid overrides", () => {
     const sanitized = sanitizeAppSettings({
       defaultVncPort: 5901,
@@ -36,6 +41,7 @@ describe("sanitizeAppSettings", () => {
       defaultQuality: 9,
       defaultAutoQuality: false,
       defaultCaptureKeys: true,
+      sessionLayout: "tabs",
     });
     expect(sanitized).toEqual({
       defaultVncPort: 5901,
@@ -44,6 +50,7 @@ describe("sanitizeAppSettings", () => {
       defaultAutoQuality: false,
       defaultCaptureKeys: true,
       tailscaleHostname: "",
+      sessionLayout: "tabs",
     });
   });
 });

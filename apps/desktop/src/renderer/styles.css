@@ -1241,6 +1241,8 @@ body,
 }
 
 .machine-group-bar__name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
@@ -2591,6 +2593,220 @@ body,
   height: 1px;
   background: var(--border);
   margin: 4px 0;
+}
+
+/* --- Several Sessions -------------------------------------- */
+
+.sessions {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: relative;
+}
+
+.session-stack {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Background tabs stay mounted at full size so they keep their
+   connection and don't resize the remote screen. */
+.session-stack > .session-tile {
+  position: absolute;
+  inset: 0;
+}
+
+.session-tile--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.session-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.session-tile,
+.session-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session-view {
+  flex: 1;
+}
+
+.session-grid .session-tile--focused .viewer-frame {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-card);
+}
+
+.viewer-frame--compact .viewer-toolbar--compact {
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  gap: var(--space-2);
+}
+
+.viewer-toolbar--compact .viewer-toolbar-label {
+  min-width: 0;
+}
+
+.viewer-toolbar--compact .viewer-toolbar-label h2 {
+  font-size: 13px;
+}
+
+.viewer-toolbar--compact .viewer-toolbar-actions {
+  gap: 2px;
+}
+
+.viewer-toolbar--compact .btn--toolbar {
+  padding: var(--space-1) var(--space-2);
+}
+
+.session-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.session-strip__tabs {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.session-strip__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.session-tab {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.session-tab--active {
+  border-color: var(--accent);
+  background: var(--bg-toolbar);
+}
+
+.session-tab__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.session-tab--active .session-tab__label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.session-tab__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tab__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+
+.session-tab__dot--live {
+  background: var(--green);
+}
+
+.session-tab__dot--down {
+  background: var(--red);
+}
+
+.session-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.session-tab__close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.session-tab__close:hover {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+/* Fullscreen: tiles meet edge to edge; the strip waits at the bottom
+   edge (the top edge belongs to the single-session toolbar). */
+.sessions--fullscreen {
+  gap: 0;
+}
+
+.sessions--fullscreen .session-grid {
+  gap: 2px;
+}
+
+.sessions--fullscreen .session-grid .viewer-frame {
+  border-radius: 0;
+}
+
+.session-strip--fullscreen {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 1002;
+  max-width: 90vw;
+  padding: 6px 12px;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-popover);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, calc(100% - 4px));
+  opacity: 0.6;
+  transition: transform var(--duration-normal) var(--ease-out), opacity var(--duration-fast);
+}
+
+.session-strip--fullscreen:hover,
+.session-strip--fullscreen:focus-within {
+  transform: translate(-50%, 0);
+  opacity: 1;
 }
 
 /* --- Fullscreen Mode --------------------------------------- */

@@ -298,7 +298,7 @@ describe("QuickConnect sharing", () => {
         <QuickConnect
           machines={MACHINES}
           peers={PEERS}
-          connectingMachineId="a"
+          connectingMachineIds={["a"]}
           onConnect={vi.fn()}
           onEdit={vi.fn()}
           onDelete={vi.fn()}

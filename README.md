@@ -35,6 +35,7 @@ on the computer joins the tailnet.
 - Save a machine and connect again in one click. Passwords stay in the OS keychain.
 - Send Super, Alt-Tab, and function keys to the remote machine. Copy and paste both ways.
 - Fit the remote screen, view it at 1:1, zoom, or show one half of a wide display.
+- On the desktop, keep several computers open at once, side by side or one at a time. **Connect All** opens a whole group.
 - On a phone, use Touch or Trackpad mode. A two-finger tap right-clicks. Pinch to zoom.
 - On Windows, optional NomadVNC Host shares that PC, including the sign-in screen, and starts at boot with no window.
 

@@ -25,6 +25,7 @@ import {
 import {
   CaptureIcon,
   DisconnectIcon,
+  ExpandIcon,
   FitScreenIcon,
   KeyboardIcon,
   MaximizeIcon,
@@ -302,6 +303,18 @@ interface ViewerPanelProps {
   onCredentialsRequired?: () => void;
   onToggleFullscreen: () => void;
   onRefocusViewer: () => void;
+  /**
+   * Grid tile: a slim toolbar (name, status, show alone, reconnect,
+   * disconnect) so several sessions fit on screen.
+   */
+  compact?: boolean;
+  /**
+   * The focused session. Only it syncs the clipboard and holds the
+   * keyboard grab, so a copy doesn't land on every open computer.
+   */
+  isActive?: boolean;
+  /** Grid tile: show this session alone. */
+  onExpand?: () => void;
   /** Stable key for the viewed machine (or session); resets view state when it changes. */
   viewPrefsKey?: string;
   /** Per-machine view prefs applied on mount / when `viewPrefsKey` changes. */
@@ -417,6 +430,9 @@ export function ViewerPanel({
   onCredentialsRequired,
   onToggleFullscreen,
   onRefocusViewer,
+  compact = false,
+  isActive = true,
+  onExpand,
   viewPrefsKey,
   initialViewPrefs,
   onViewPrefsChange,
@@ -448,6 +464,8 @@ export function ViewerPanel({
   const [currentResolution, setCurrentResolution] = useState({ width: 0, height: 0 });
   const [activeShortcutSection, setActiveShortcutSection] = useState("navigation");
   const [displayRegion, setDisplayRegion] = useState<DisplayRegion>(prefs.displayRegion ?? "full");
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const displayRegionRef = useRef<DisplayRegion>(prefs.displayRegion ?? "full");
   useEffect(() => {
@@ -467,7 +485,7 @@ export function ViewerPanel({
     setIdleBoosted(false);
     setDisplayRegion(next.displayRegion ?? "full");
     regionAutoApplied.current = false;
-    if (next.captureKeys) {
+    if (next.captureKeys && isActiveRef.current) {
       // Best-effort: re-assert a remembered grab; the button shows the truth.
       void requestKeyboardGrab().then((grabbed) => setGrabActive(grabbed));
     } else {
@@ -477,9 +495,39 @@ export function ViewerPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewPrefsKey]);
 
+  // The grab is per window: only the focused session holds it. Moving
+  // focus to another session hands it over; coming back re-asserts a
+  // remembered grab.
+  const grabActiveRef = useRef(grabActive);
+  useEffect(() => {
+    grabActiveRef.current = grabActive;
+  }, [grabActive]);
+  const captureKeysRef = useRef(captureKeys);
+  useEffect(() => {
+    captureKeysRef.current = captureKeys;
+  }, [captureKeys]);
+  const isActiveMounted = useRef(false);
+  useEffect(() => {
+    if (!isActiveMounted.current) {
+      isActiveMounted.current = true;
+      return;
+    }
+    if (!isActive) {
+      if (grabActiveRef.current) {
+        releaseKeyboardGrab();
+        setGrabActive(false);
+      }
+      setOpenPanel(null);
+    } else if (captureKeysRef.current) {
+      void requestKeyboardGrab().then((grabbed) => setGrabActive(grabbed));
+    }
+  }, [isActive]);
+
   // Never leak a held grab past the session.
   useEffect(() => () => {
-    releaseKeyboardGrab();
+    if (grabActiveRef.current) {
+      releaseKeyboardGrab();
+    }
   }, []);
 
   const syncClipboardRef = useRef(syncClipboard);
@@ -557,7 +605,7 @@ export function ViewerPanel({
           setLinkHealth({ state: data.state, latencyMs: data.latencyMs });
           break;
         case "viewerClipboard":
-          if (syncClipboardRef.current) {
+          if (syncClipboardRef.current && isActiveRef.current) {
             const newText = data.text ?? "";
             lastLocalClipboard.current = newText;
             window.nomadNative.writeClipboard(newText).catch(() => {});
@@ -730,7 +778,7 @@ export function ViewerPanel({
   }
 
   useEffect(() => {
-    if (!syncClipboard) return;
+    if (!syncClipboard || !isActive) return;
     const interval = window.setInterval(() => {
       window.nomadNative.readClipboard()
         .then((text) => {
@@ -742,7 +790,7 @@ export function ViewerPanel({
         .catch(() => {});
     }, 1500);
     return () => clearInterval(interval);
-  }, [syncClipboard, sendCommand]);
+  }, [syncClipboard, isActive, sendCommand]);
 
   function togglePanel(panel: OpenPanel) {
     setOpenPanel((current) => current === panel ? null : panel);
@@ -758,10 +806,40 @@ export function ViewerPanel({
     setActiveShortcutSection("navigation");
   }, [activeOS]);
 
+  const compactToolbar = (
+    <div className="viewer-toolbar viewer-toolbar--compact">
+      <div className="viewer-toolbar-label">
+        <h2 title={`${session.label} (${session.host}:${session.port})`}>{session.label}</h2>
+        {viewerConnected && <LinkHealthBadge health={linkHealth} />}
+      </div>
+      <div className="viewer-toolbar-actions">
+        {onExpand && (
+          <button className="btn btn--toolbar" onClick={onExpand} title="Show Alone">
+            <ExpandIcon style={iconSize} />
+          </button>
+        )}
+        {onReconnect && (
+          <button
+            className="btn btn--toolbar"
+            onClick={onReconnect}
+            disabled={isReconnecting}
+            title="Drop this connection and open a fresh one now"
+          >
+            <RefreshIcon style={iconSize} />
+          </button>
+        )}
+        <button className="btn btn--toolbar" onClick={onDisconnect} title="Disconnect Session">
+          <DisconnectIcon style={iconSize} />
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className={`viewer-frame ${isFullscreen ? "viewer-frame--fullscreen" : ""}`}>
+    <div className={`viewer-frame ${isFullscreen ? "viewer-frame--fullscreen" : ""} ${compact ? "viewer-frame--compact" : ""}`}>
       {isFullscreen && <div className="fullscreen-trigger" />}
 
+      {compact ? compactToolbar : (
       <div className="viewer-toolbar">
         {!isFullscreen && (
           <div className="viewer-toolbar-info">
@@ -880,8 +958,9 @@ export function ViewerPanel({
           </button>
         </div>
       </div>
+      )}
 
-      {openPanel === "zoom" && (
+      {!compact && openPanel === "zoom" && (
         <div className="viewer-dropdown viewer-dropdown--zoom">
           <div className="viewer-dropdown-col">
             <label className="viewer-dropdown-label">Zoom Level</label>
@@ -919,7 +998,7 @@ export function ViewerPanel({
         </div>
       )}
 
-      {openPanel === "keys" && (
+      {!compact && openPanel === "keys" && (
         <div className="viewer-dropdown viewer-dropdown--keys">
           <div className="viewer-dropdown-grid-cols viewer-dropdown-grid-cols--keys">
             <div className="viewer-dropdown-col">
@@ -1011,7 +1090,7 @@ export function ViewerPanel({
         </div>
       )}
 
-      {openPanel === "settings" && (
+      {!compact && openPanel === "settings" && (
         <div className="viewer-dropdown">
           <div className="viewer-dropdown-grid-cols">
             <div className="viewer-dropdown-col">
