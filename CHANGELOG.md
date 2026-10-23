@@ -5,6 +5,13 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.3.0 — 2026-10-23
+
+- The desktop app can keep several computers open at once. Connecting to another computer no longer asks you to disconnect the first; the new one opens beside it. With two or more open, a row of tabs appears above them: **Show All Side by Side** tiles every screen in the window, and **One at a Time** shows one with the rest a tab away. Each session keeps its own connection, reconnects on its own, and is disconnected on its own. The layout is remembered.
+- With a group selected in the machine list, **Connect All** opens every computer in it and tiles them, for example the machines behind a wall of displays. Computers that ask for a password ask one after another.
+- With several sessions open, keys, the keyboard capture and the clipboard go to the one you last clicked, outlined in the tiled view. Copying on one remote computer and pasting on another works.
+- A saved computer that is already open says **Show** instead of **Connected**; clicking it brings that session forward.
+
 ## 1.2.0 — 2026-10-13
 
 - NomadVNC Host is much smoother. It compresses the screen (Tight, with JPEG for photos and video, and ZRLE for RealVNC) instead of sending raw pixels, and NomadVNC viewers get a steady stream of changes instead of asking for each frame. In tests with a NomadVNC viewer, an animated screen went from about 14 to about 60 frames a second on a local network, and from about 14 to about 35 over a link with a 50 ms round trip.
