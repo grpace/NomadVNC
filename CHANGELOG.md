@@ -5,6 +5,11 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.3.1 — 2026-10-27
+
+- The desktop app now runs on Electron 42. Electron 41 no longer gets security fixes, and the newer version closes a batch of published Electron vulnerabilities, including a certificate-trust mitigation, several permission-origin checks, and a SameSite cookie fix.
+- Updated the libraries behind the account backend and the apps (`body-parser`, `fast-uri`, `qs`, `undici`, and `nodemailer`) to versions that fix published denial-of-service and parsing problems.
+
 ## 1.3.0 — 2026-10-23
 
 - The desktop app can keep several computers open at once. Connecting to another computer no longer asks you to disconnect the first; the new one opens beside it. With two or more open, a row of tabs appears above them: **Show All Side by Side** tiles every screen in the window, and **One at a Time** shows one with the rest a tab away. Each session keeps its own connection, reconnects on its own, and is disconnected on its own. The layout is remembered.
