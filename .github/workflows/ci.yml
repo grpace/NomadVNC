@@ -2,8 +2,10 @@ name: ci
 
 on:
   # Branch pushes intentionally disabled — CI runs on PRs and version tags only.
+  # v<version> releases the apps (and attaches the current host);
+  # host-v<version> releases NomadVNC Host on its own. See docs/releasing.md.
   push:
-    tags: ["v*"]
+    tags: ["v*", "host-v*"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -11,6 +13,13 @@ on:
         description: "Publish GitHub Release (true to publish release assets)"
         type: boolean
         default: false
+
+env:
+  TAG: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+  # App release: a v tag, or a manual run with publish ticked.
+  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true' }}
 
 jobs:
   js:
@@ -47,11 +56,27 @@ jobs:
           GOOS: windows
           GOARCH: amd64
 
+  release-draft:
+    # An app release is assembled as a draft and published once every
+    # package is attached. Published straight away, it would be "Latest"
+    # with files still missing, and the site's latest/download links and
+    # the auto-updater would serve nothing for those platforms meanwhile.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+    needs: [js, go]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "$TAG" --notes "" --target "$GITHUB_SHA"
+
   package-linux:
     # Builds installable Linux desktop packages (AppImage, RPM, DEB).
     # Runs on PRs and dispatches to catch packaging issues BEFORE tagging,
     # and publishes to GitHub Releases when triggered by version tags or explicit publish.
-    needs: [js, go]
+    # The draft job is skipped on pull requests; run anyway, but not after
+    # a failure, and not for a host-only release.
+    if: ${{ !cancelled() && !failure() && !startsWith(github.ref, 'refs/tags/host-v') }}
+    needs: [js, go, release-draft]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -94,19 +119,15 @@ jobs:
           if-no-files-found: error
 
       # Version-free copies back the site's releases/latest/download links.
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+      - if: env.PUBLISH == 'true'
         shell: bash
         run: node scripts/copy-latest-names.mjs apps/desktop/release
       # Publishes to a GitHub Release on version tags or explicit publish dispatch
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            apps/desktop/release/*.AppImage
-            apps/desktop/release/*.rpm
-            apps/desktop/release/*.deb
-            apps/desktop/release/latest-linux.yml
-          fail_on_unmatched_files: false
+      - if: env.PUBLISH == 'true'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" apps/desktop/release/*.{AppImage,rpm,deb} apps/desktop/release/latest-linux.yml --clobber
 
   package-mac:
     # Builds the macOS Apple Silicon desktop packages (DMG + ZIP for
@@ -114,7 +135,8 @@ jobs:
     # BEFORE tagging, publishes on version tags or explicit publish.
     # Signing/notarization happen only when the secrets from
     # docs/releasing.md are configured.
-    needs: [js, go, package-linux]
+    if: ${{ !cancelled() && !failure() && !startsWith(github.ref, 'refs/tags/host-v') }}
+    needs: [js, go, release-draft, package-linux]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -167,24 +189,22 @@ jobs:
           if-no-files-found: warn
 
       # Version-free copies back the site's releases/latest/download links.
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+      - if: env.PUBLISH == 'true'
         shell: bash
         run: node scripts/copy-latest-names.mjs apps/desktop/release
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/latest-mac.yml
-          fail_on_unmatched_files: false
+      - if: env.PUBLISH == 'true'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" apps/desktop/release/*.{dmg,zip} apps/desktop/release/latest-mac.yml --clobber
 
   package-windows:
     # Builds the Windows 64-bit NSIS installer and the optional NomadVNC
     # Host exe. Code signing of the installer happens only when the WIN_*
     # secrets from docs/releasing.md exist. The host exe is attached
     # unsigned, and it is not inside the viewer installer.
-    needs: [js, go, package-linux]
+    if: ${{ !cancelled() && !failure() && !startsWith(github.ref, 'refs/tags/host-v') }}
+    needs: [js, go, release-draft, package-linux]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -235,22 +255,21 @@ jobs:
           if-no-files-found: warn
 
       # Version-free copies back the site's releases/latest/download links.
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+      - if: env.PUBLISH == 'true'
         shell: bash
         run: node scripts/copy-latest-names.mjs apps/desktop/release
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/latest.yml
-          fail_on_unmatched_files: false
+      - if: env.PUBLISH == 'true'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" apps/desktop/release/*.exe apps/desktop/release/latest.yml --clobber
 
   package-android:
     # Sideload APK for phones and the x86_64 emulator. Not a Play App
     # Bundle. Signed with the upload key when those secrets exist, so a
     # later Play listing can update the same install.
-    needs: [js, go]
+    if: ${{ !cancelled() && !failure() && !startsWith(github.ref, 'refs/tags/host-v') }}
+    needs: [js, go, release-draft]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -338,11 +357,69 @@ jobs:
           path: apps/mobile/release/*.apk
           if-no-files-found: error
       # Version-free copies back the site's releases/latest/download links.
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+      - if: env.PUBLISH == 'true'
         shell: bash
         run: node scripts/copy-latest-names.mjs apps/mobile/release
-      - if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
+      - if: env.PUBLISH == 'true'
+        shell: bash
+        run: gh release upload "$TAG" apps/mobile/release/*.apk --clobber
+
+  release-publish:
+    # Every package is attached: publish the draft as Latest.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+    needs: [package-linux, package-mac, package-windows, package-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release edit "$TAG" --draft=false --latest
+
+  release-host:
+    # NomadVNC Host on its own: no app packages. It gets a host-v release
+    # that is never "Latest" (the apps' auto-updater reads Latest), and its
+    # exe also replaces the host on the Latest app release, where the
+    # site's releases/latest/download/NomadVNC-Host-x64.exe link points.
+    if: startsWith(github.ref, 'refs/tags/host-v')
+    needs: [go]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag against the host version
+        run: |
+          want="host-v$(tr -d '[:space:]' < go-core/cmd/nomadvnc-host/VERSION)"
+          if [ "$TAG" != "$want" ]; then
+            echo "Tag $TAG does not match go-core/cmd/nomadvnc-host/VERSION ($want)."
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v4
         with:
-          files: apps/mobile/release/*.apk
-          fail_on_unmatched_files: true
+          version: 10.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-core/go.mod
+          cache-dependency-path: go-core/go.sum
+      - run: pnpm install --frozen-lockfile
+      # The exe's icon, as the app jobs render it.
+      - run: xvfb-run -a pnpm --filter @nomadvnc/desktop generate:icons:desktop
+      - run: pnpm build:host -- --release
+      - run: node scripts/copy-latest-names.mjs apps/desktop/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nomadvnc-host
+          path: apps/desktop/release/NomadVNC-Host-*.exe
+          if-no-files-found: error
+      - name: Publish
+        run: |
+          version="${TAG#host-v}"
+          files=(apps/desktop/release/NomadVNC-Host-"$version"-x64.exe apps/desktop/release/NomadVNC-Host-x64.exe)
+          latest="$(gh release view --json tagName -q .tagName)"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --latest=false \
+            --title "NomadVNC Host $version" --notes "NomadVNC Host only. The apps are unchanged; see CHANGELOG.md."
+          gh release upload "$TAG" "${files[@]}" --clobber
+          gh release upload "$latest" "${files[@]}" --clobber

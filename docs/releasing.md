@@ -2,7 +2,9 @@
 
 ## How a release is built
 
-`.github/workflows/ci.yml` runs on every pull request and on `v*` tags:
+`.github/workflows/ci.yml` runs on every pull request, on `v*` tags (an
+app release), and on `host-v*` tags (a NomadVNC Host release on its own;
+see [Releasing only NomadVNC Host](#releasing-only-nomadvnc-host)):
 
 | Job | Runner | Produces |
 |---|---|---|
@@ -14,10 +16,14 @@
 | `package-android` | Ubuntu | `NomadVNC-<version>.apk` (sideload; not the Play bundle) |
 
 On pull requests the packages are uploaded as workflow artifacts for
-testing. On a `v*` tag (or a manual run with `publish: true`) all three
-platforms are attached to one GitHub Release. The `latest*.yml` files are
-what the apps' auto-updater reads, so always publish them with the
-binaries.
+testing. On a `v*` tag (or a manual run with `publish: true`) the
+`release-draft` job creates a draft GitHub Release, each package job
+attaches its files, and `release-publish` publishes the draft as Latest
+once every package job has succeeded. Until then the previous release
+stays Latest, so its download links and the auto-updater keep working.
+If a package job fails, the draft stays a draft: fix forward with the next
+patch version. The `latest*.yml` files are what the apps' auto-updater
+reads, so always publish them with the binaries.
 
 Each package job also attaches a copy of every installer without the
 version in its name (`NomadVNC-x64.exe`, `NomadVNC-Host-x64.exe`,
@@ -31,10 +37,11 @@ The Go sidecar is cross-compiled per platform and bundled under
 
 NomadVNC Host is a separate Windows download, `NomadVNC-Host-<version>-x64.exe`.
 It is not inside the viewer installer, and it is not listed in `latest.yml`,
-so the viewer auto-updater does not replace it. The `go` job cross-compiles
-it on every run. The Windows package job builds it again and attaches that
-exe to the same Release as the viewer. It stays unsigned even when the
-viewer installer is signed.
+so the viewer auto-updater does not replace it. Its version is its own,
+in `go-core/cmd/nomadvnc-host/VERSION`, not the apps' `package.json`
+version. The `go` job cross-compiles it on every run. The Windows package
+job builds it again and attaches that exe to the same Release as the
+viewer. It stays unsigned even when the viewer installer is signed.
 
 ## Cutting a release
 
@@ -43,7 +50,8 @@ viewer installer is signed.
    and `backend/package.json`. For mobile, also bump `versionName` +
    `versionCode` in `apps/mobile/android/app/build.gradle` and
    `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in the iOS project
-   (the build numbers must increase for the app stores).
+   (the build numbers must increase for the app stores). If the host
+   changed too, bump `go-core/cmd/nomadvnc-host/VERSION`.
 2. Merge to `master`.
 3. Tag and push:
    ```bash
@@ -54,6 +62,31 @@ viewer installer is signed.
    the viewer `.exe`, `NomadVNC-Host-<version>-x64.exe`,
    `NomadVNC-<version>.apk`, the version-free copy of each of those,
    and the three `latest*.yml` files.
+
+## Releasing only NomadVNC Host
+
+When only the host changed, release it without rebuilding the apps:
+
+1. Update `CHANGELOG.md` and bump `go-core/cmd/nomadvnc-host/VERSION`
+   (only that; the apps keep their version).
+2. Merge to `master`.
+3. Tag and push with the host version:
+   ```bash
+   git tag host-v1.3.3
+   git push origin host-v1.3.3
+   ```
+   The `release-host` job checks the tag against `VERSION` and fails if
+   they differ.
+4. The job builds only the host, in a few minutes. It creates a
+   `host-v1.3.3` release that is never marked Latest (the apps'
+   auto-updater reads Latest), and it uploads the exe to the current
+   Latest app release too, replacing that release's
+   `NomadVNC-Host-x64.exe`. The site's
+   `releases/latest/download/NomadVNC-Host-x64.exe` link then serves the
+   new host with no site change.
+
+The next app release attaches whatever host `VERSION` says, so the host
+on Latest never goes backwards.
 
 **Never move or re-create a published tag** — it breaks `git pull` for
 everyone who fetched it and confuses the auto-updater. Fix forward with
@@ -66,7 +99,7 @@ pnpm desktop:package:linux   # → apps/desktop/release/
 pnpm desktop:package:mac     # on a Mac
 pnpm desktop:package:win     # on Windows
 pnpm build:host              # → go-core/bin/nomadvnc-host.exe
-pnpm build:host -- --release # also copies NomadVNC-Host-<version>-x64.exe
+pnpm build:host -- --release # also copies NomadVNC-Host-<host version>-x64.exe
                              # into apps/desktop/release/
 ```
 
