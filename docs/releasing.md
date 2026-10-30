@@ -16,7 +16,8 @@ see [Releasing only NomadVNC Host](#releasing-only-nomadvnc-host)):
 | `package-android` | Ubuntu | `NomadVNC-<version>.apk` (sideload; not the Play bundle) |
 
 On pull requests the packages are uploaded as workflow artifacts for
-testing. On a `v*` tag (or a manual run with `publish: true`) the
+testing. On a `v*` tag (or a manual run on that tag with `publish: true`;
+a manual run on a branch never publishes) the
 `release-draft` job creates a draft GitHub Release, each package job
 attaches its files, and `release-publish` publishes the draft as Latest
 once every package job has succeeded. Until then the previous release
@@ -78,10 +79,11 @@ When only the host changed, release it without rebuilding the apps:
    The `release-host` job checks the tag against `VERSION` and fails if
    they differ.
 4. The job builds only the host, in a few minutes. It creates a
-   `host-v1.3.3` release that is never marked Latest (the apps'
-   auto-updater reads Latest), and it uploads the exe to the current
-   Latest app release too, replacing that release's
-   `NomadVNC-Host-x64.exe`. The site's
+   `host-v1.3.3` release holding `NomadVNC-Host-1.3.3-x64.exe`, never
+   marked Latest (the apps' auto-updater reads Latest). On the current
+   Latest app release it swaps the host: the new versioned exe and
+   `NomadVNC-Host-x64.exe` go up, and the older versioned host exe is
+   deleted, so that release always carries exactly one host. The site's
    `releases/latest/download/NomadVNC-Host-x64.exe` link then serves the
    new host with no site change.
 
