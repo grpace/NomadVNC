@@ -8,7 +8,9 @@ const root = path.join(scriptDir, "..");
 const goCore = path.join(root, "go-core");
 mkdirSync(path.join(goCore, "bin"), { recursive: true });
 
-const { version } = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+// The host has its own version, separate from the apps', so it can ship
+// on its own (a host-v<version> tag; see docs/releasing.md).
+const version = readFileSync(path.join(goCore, "cmd", "nomadvnc-host", "VERSION"), "utf8").trim();
 
 function fail(result) {
   if (result.error) {
