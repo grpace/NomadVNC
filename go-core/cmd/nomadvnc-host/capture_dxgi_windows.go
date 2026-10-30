@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"image"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -59,8 +59,6 @@ var (
 	// a first image.
 	dxgiWaited bool
 	lastDXGI   rfb.Frame
-	// dxgiImage is reused for every capture; frames get their own copy.
-	dxgiImage *image.RGBA
 	// captureVia is the capture method last logged.
 	captureVia string
 	// frameSeq numbers distinct images (rfb.Frame.Seq).
@@ -144,26 +142,17 @@ func captureDXGI() (rfb.Frame, error) {
 		}
 	}
 
-	bounds, err := dxgiDup.GetBounds()
-	if err != nil || bounds.Dx() < 640 || bounds.Dy() < 480 {
-		resetDXGI()
-		if err == nil {
-			err = errors.New("desktop duplication returned no usable image")
-		}
-		return rfb.Frame{}, err
-	}
-	rect := image.Rect(0, 0, bounds.Dx(), bounds.Dy())
-	if dxgiImage == nil || dxgiImage.Rect != rect {
-		dxgiImage = image.NewRGBA(rect)
-		lastDXGI = rfb.Frame{}
-	}
+	var (
+		frame rfb.Frame
+		err   error
+	)
 	if len(lastDXGI.Pix) == 0 && !dxgiWaited {
 		dxgiWaited = true
-		err = firstDXGIImage()
+		frame, err = firstDXGIImage()
 	} else {
 		// Don't wait: connections poll every frame, and a wait here would
 		// hold up every connection's next check.
-		err = dxgiDup.GetImage(dxgiImage, 0)
+		frame, err = grabDXGI(0)
 	}
 	if errors.Is(err, outputduplication.ErrNoImageYet) {
 		if len(lastDXGI.Pix) > 0 {
@@ -177,7 +166,6 @@ func captureDXGI() (rfb.Frame, error) {
 		resetDXGI()
 		return rfb.Frame{}, err
 	}
-	frame := rgbaToBGRA(dxgiImage)
 	frameSeq++
 	frame.Seq = frameSeq
 	lastDXGI = frame
@@ -218,21 +206,21 @@ func startDXGI() error {
 // firstDXGIImage waits for a new duplication's first image. A pointer
 // update also comes back as "no image yet", at once, so asking once is not
 // enough: keep asking until the time is up.
-func firstDXGIImage() error {
+func firstDXGIImage() (rfb.Frame, error) {
 	deadline := time.Now().Add(firstImageWait)
 	nudged := false
 	for {
 		left := time.Until(deadline)
 		if left <= 0 {
-			return outputduplication.ErrNoImageYet
+			return rfb.Frame{}, outputduplication.ErrNoImageYet
 		}
 		if !nudged {
 			left = min(left, 200*time.Millisecond)
 		}
 		asked := time.Now()
-		err := dxgiDup.GetImage(dxgiImage, uint(left.Milliseconds())+1)
+		frame, err := grabDXGI(uint(left.Milliseconds()) + 1)
 		if !errors.Is(err, outputduplication.ErrNoImageYet) {
-			return err
+			return frame, err
 		}
 		if !nudged {
 			// Duplication waits for the next change. Where Windows draws
@@ -250,7 +238,6 @@ func firstDXGIImage() error {
 // pause.
 func resetDXGI() {
 	dxgiFailed()
-	dxgiImage = nil
 	lastDXGI = rfb.Frame{}
 	if dxgiDup != nil {
 		dxgiDup.Release()
@@ -271,11 +258,43 @@ func nudgeCursor() {
 	sendInput(1, unsafe.Pointer(&mouseInput{Type: inputMouse, Dx: -1, Flags: mouseEventMove}), unsafe.Sizeof(mouseInput{}))
 }
 
-// rgbaToBGRA gives a frame its own copy of the image with red and blue
-// swapped. The fourth byte of each pixel is padding and is left as it is.
-func rgbaToBGRA(img *image.RGBA) rfb.Frame {
-	pix := make([]byte, len(img.Pix))
-	copy(pix, img.Pix)
-	swizzle.BGRA(pix) // swaps the two in place, whichever way round
-	return rfb.Frame{Width: img.Rect.Dx(), Height: img.Rect.Dy(), Pix: pix}
+// grabDXGI returns the next image from the duplication, waiting up to
+// timeoutMs for one.
+//
+// The size is the captured image's own, never the output's desktop
+// coordinates. Those are in the units of the DPI the helper started
+// with, so after a change to the display scale they no longer match the
+// image, and a buffer sized from them gets each row wrapped across two.
+func grabDXGI(timeoutMs uint) (rfb.Frame, error) {
+	unmap, mapped, size, err := dxgiDup.Snapshot(timeoutMs)
+	if err != nil {
+		return rfb.Frame{}, err
+	}
+	defer unmap()
+	width, height, pitch := int(size.X), int(size.Y), int(mapped.Pitch)
+	if width < 640 || height < 480 || pitch < width*4 {
+		return rfb.Frame{}, errors.New("desktop duplication returned no usable image")
+	}
+	data := unsafe.Slice((*byte)(mapped.PBits), pitch*height)
+	pix := make([]byte, width*height*4)
+	rowBytes := width * 4
+	for y := 0; y < height; y++ {
+		copy(pix[y*rowBytes:(y+1)*rowBytes], data[y*pitch:])
+	}
+	if !dxgiDataIsBGRA() {
+		// Swaps red and blue in place. The fourth byte of each pixel is
+		// padding and is left as it is.
+		swizzle.BGRA(pix)
+	}
+	return rfb.Frame{Width: width, Height: height, Pix: pix}, nil
+}
+
+// dxgiDataIsBGRA reports the byte order of Snapshot's data: BGRA when the
+// duplication fell back to DuplicateOutput, else the RGBA asked of
+// DuplicateOutput1. go-d3d (pinned at v1.0.1) keeps this in an unexported
+// field that its own GetImage reads, and the field can change with any
+// frame, so it is read after each Snapshot.
+func dxgiDataIsBGRA() bool {
+	field := reflect.ValueOf(dxgiDup).Elem().FieldByName("needsSwizzle")
+	return field.IsValid() && field.Bool()
 }

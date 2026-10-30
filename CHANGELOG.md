@@ -5,6 +5,10 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.3.2 — 2026-10-29
+
+- NomadVNC Host shows the screen correctly after the Windows display scale changes, for example from 125% back to 100%. Before, every viewer saw a scrambled picture until the PC was restarted or signed out: the left and right halves of the screen were interleaved line by line, with part of the picture black.
+
 ## 1.3.1 — 2026-10-27
 
 - The desktop app now runs on Electron 42. Electron 41 no longer gets security fixes, and the newer version closes a batch of published Electron vulnerabilities, including a certificate-trust mitigation, several permission-origin checks, and a SameSite cookie fix.
