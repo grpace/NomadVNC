@@ -19,7 +19,7 @@ points — never commit anything under `docs/internal/`.
   Entry: `pnpm desktop:dev`.
 - `apps/mobile` — React Native 0.79 + WebView viewer. JS shell is complete
   (typed `NomadNativeModule` bridge, local-first manual connect, viewer
-  assets pipeline, 131 tests); GoMobile bindings in `go-core/mobile` and
+  assets pipeline, vitest suite); GoMobile bindings in `go-core/mobile` and
   Swift/Kotlin native modules (`ios/NomadVNC/NomadNativeModule.*`,
   `android/.../com/nomadvnc/`). The native projects are committed; Android
   builds and runs on an emulator from Linux (recipe: `apps/mobile/
@@ -47,6 +47,8 @@ points — never commit anything under `docs/internal/`.
 
 - Node 22 (`cat .nvmrc`), `pnpm@10.7.0` — **never `npm install`**, this is a
   pnpm workspace. Go toolchain per `go-core/go.mod`.
+- Electron 42, React Native 0.79 and Go 1.27 are newer than most training
+  data: check the installed versions' docs before relying on memory.
 - Bootstrap: `pnpm install` → `pnpm go:tidy` → `pnpm build` → `pnpm test`.
 - JS deps via `pnpm`; Go deps via `go mod tidy` / `go build` / `go test`.
 
@@ -56,8 +58,8 @@ points — never commit anything under `docs/internal/`.
 |---|---|
 | Install | `pnpm install` |
 | Full build (turbo + sidecar) | `pnpm build` |
-| All typechecks | `pnpm turbo run typecheck` (6 tasks, must be green) |
-| All JS tests | `pnpm turbo run test` (desktop + viewer-shell + backend vitest) |
+| All typechecks | `pnpm typecheck` (= `turbo run typecheck`, every package; must be green) |
+| All JS tests | `pnpm turbo run test` (vitest in desktop, mobile, viewer-shell and backend) |
 | Go tests | `pnpm go:test` (or `go test ./...` in `go-core`) |
 | Backend dev (needs Docker) | `docker compose -f backend/compose.yaml up --build` |
 | Everything | `pnpm test` (= turbo test + go tests) |
@@ -145,7 +147,7 @@ points — never commit anything under `docs/internal/`.
 - Copy `backend/.env.example` to `backend/.env` for local secrets (never
   commit real values); production secrets live in the deployment's
   environment only.
-- Verify before finishing: `pnpm turbo run typecheck` + relevant `test`.
+- Verify before finishing: `pnpm typecheck` + relevant `test`.
   For desktop viewer/session work also run `pnpm --filter @nomadvnc/desktop test`
   and `pnpm --filter @nomadvnc/viewer-shell test`.
 - No CI bypasses, no force-push, no committing secrets. Small focused commits;
