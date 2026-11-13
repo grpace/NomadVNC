@@ -5,6 +5,10 @@ All notable changes to NomadVNC. Versions follow
 
 ## Unreleased
 
+## 1.3.3 — 2026-11-12
+
+- On Android 11 and later, signing in to Tailscale on the phone works again. Before, the Your Tailnet card showed "tsnet: route ip+net: netlinkrib: permission denied" and the tailnet never started, because Android doesn't let apps read the network interface list the way the engine asked for it. The app now passes the list from Android itself. Manual connections weren't affected.
+
 ## 1.3.2 — 2026-10-29
 
 - NomadVNC Host shows the screen correctly after the Windows display scale changes, for example from 125% back to 100%. Before, every viewer saw a scrambled picture until the PC was restarted or signed out: the left and right halves of the screen were interleaved line by line, with part of the picture black.

@@ -16,10 +16,12 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import mobile.InterfaceLister
 import mobile.Mobile
 import org.json.JSONArray
 import java.io.File
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -91,6 +93,13 @@ class NomadNativeModule(private val reactContext: ReactApplicationContext) :
     }
 
     init {
+        try {
+            // Android 11+ blocks Go's net.Interfaces (netlink), which tsnet
+            // needs; hand it the list from Java instead.
+            Mobile.registerInterfaceLister(AndroidInterfaceLister)
+        } catch (e: Exception) {
+            android.util.Log.e("NomadNativeModule", "Failed to register interface lister", e)
+        }
         try {
             val dir = File(reactContext.filesDir, "nomadvnc-state").apply { mkdirs() }
             Mobile.configure(dir.absolutePath, suggestedDeviceName())
@@ -482,4 +491,46 @@ class NomadNativeModule(private val reactContext: ReactApplicationContext) :
             promise.reject("STORAGE_ERROR", e.message)
         }
     }
+}
+
+/**
+ * Lists network interfaces for the Go engine in the line format documented
+ * on `InterfaceLister` in go-core/mobile/interfaces.go:
+ * `name index mtu up broadcast loopback pointToPoint multicast | addr/prefix ...`
+ */
+private object AndroidInterfaceLister : InterfaceLister {
+    override fun interfacesAsString(): String {
+        val interfaces = try {
+            NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+        } catch (e: Exception) {
+            android.util.Log.w("NomadNativeModule", "Listing network interfaces failed", e)
+            return ""
+        }
+        val sb = StringBuilder()
+        for (nif in interfaces) {
+            try {
+                sb.append(nif.name).append(' ')
+                    .append(nif.index).append(' ')
+                    .append(nif.mtu).append(' ')
+                    .append(nif.isUp).append(' ')
+                    .append(nif.broadcastSupported()).append(' ')
+                    .append(nif.isLoopback).append(' ')
+                    .append(nif.isPointToPoint).append(' ')
+                    .append(nif.supportsMulticast()).append(" |")
+                for (ia in nif.interfaceAddresses) {
+                    val host = ia.address?.hostAddress ?: continue
+                    sb.append(' ').append(host.substringBefore('%')).append('/').append(ia.networkPrefixLength.toInt())
+                }
+                sb.append('\n')
+            } catch (e: Exception) {
+                // An interface can disappear mid-listing; drop the partial line.
+                val lineStart = sb.lastIndexOf("\n") + 1
+                sb.setLength(lineStart)
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun NetworkInterface.broadcastSupported(): Boolean =
+        interfaceAddresses.any { it.broadcast != null }
 }
